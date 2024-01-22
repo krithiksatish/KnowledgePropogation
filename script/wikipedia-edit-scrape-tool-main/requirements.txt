@@ -5,3 +5,4 @@ loguru
 requests
 dateparser
 html2text
+nltk
