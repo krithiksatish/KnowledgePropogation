@@ -351,7 +351,8 @@ re_her = re.compile("[^a-zA-Z0-9]+her ")
 re_him = re.compile("[^a-zA-Z0-9]+him ")
 
 def get_gender_with_text(txt):
-    txt = txt.lower()
+    txt = txt.clean_text if isinstance(txt, Paragraph) else txt.text if isinstance(txt, Header) else "Unsupported object type"
+#     txt = txt.lower()
     freq_he = len(re_he.findall(txt))+len(re_his.findall(txt))+len(re_him.findall(txt))
     freq_she = len(re_she.findall(txt))+len(re_her.findall(txt))
     gender = None
@@ -385,3 +386,40 @@ def get_info(wiki_link: str, lang_wiki: str):
     person_info["section-names"] = section_names # lengths of sections should be the same as section-text.
     person_info["section-text"] = section_text
     return wiki_link, person_info
+
+
+def get_diff_text(diff_page_url: str, lang_wiki: str) -> set(str):
+    # Goal of function: given a url of the diff page, return a set of strings (ideally sentences)
+    # that contains all the yellow highlights (the added sentences)
+
+    #### step 1: requesting the html
+    # get the html through a request.
+
+    # do try/except 3 times.
+    for _ in range(3):
+        try:
+            html = requests.get(diff_page_url, timeout=10).text
+            break
+        except requests.exceptions.Timeout:
+            print("timeout error")
+            continue
+
+    soup = bs4.BeautifulSoup(html, 'html.parser')
+
+    
+    # keep only the #mw-content-text div.
+    # content_div = soup.find('div', id='mw-content-text')
+
+    # ### Step 2 removing large swathes of the page
+    # remove_non_sentences(content_div, diff_page_url) # NOTE: warning, this modifies the content_div in place.
+
+    # # iterate over the children of the content div. 
+    # important_content_elems = []
+    # print("looking for p, h2, h3")
+    # for element in soup.find_all(lambda tag: tag.name in ['p', 'h2', 'h3']):
+    #     if element.name == 'p':
+    #         important_content_elems.append(clean_paragraph(element))
+    #     elif element.name == 'h2' or element.name == 'h3':
+    #         important_content_elems.append(clean_header(element))
+    # # TODO: add call to filter headers for empty sections.
+    # return important_content_elems
