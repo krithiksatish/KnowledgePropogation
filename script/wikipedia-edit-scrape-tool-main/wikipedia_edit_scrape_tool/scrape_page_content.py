@@ -388,7 +388,7 @@ def get_info(wiki_link: str, lang_wiki: str):
     return wiki_link, person_info
 
 
-def get_diff_text(diff_page_url: str, lang_wiki: str) -> set(str):
+def get_diff_text(diff_page_url: str, lang_wiki: str) -> set[str]:
     # Goal of function: given a url of the diff page, return a set of strings (ideally sentences)
     # that contains all the yellow highlights (the added sentences)
 
@@ -405,6 +405,42 @@ def get_diff_text(diff_page_url: str, lang_wiki: str) -> set(str):
             continue
 
     soup = bs4.BeautifulSoup(html, 'html.parser')
+    
+    text_addition_elements = soup.find_all('ins', class_='diffchange diffchange-inline')
+    text_addition_raw = {elem.get_text(strip=True) for elem in text_addition_elements}
+
+    return text_addition_raw
+
+    """
+    text_additions = set()
+    ref_opened = False
+    nonref_text_raw = ""
+
+    # iterate through each 'ins' element with diffchange diffchange-inline class
+    ins_elements = soup.find_all('ins', class_='diffchange diffchange-inline')
+    
+    for ins in ins_elements:
+        # traverse html character by character to check for <ref> tags
+        ins_raw = str(ins)
+        for i in range(len(ins_raw)):
+            if ins_raw.startswith('<ref>', i):  # check for opening <ref>
+                ref_opened = True
+            elif ins_raw.startswith('</ref>', i):  # check for closing </ref>
+                ref_opened = False
+                i += 5  # move index past the closing </ref> tag
+
+            # if not within <ref> tags, add character to nonref_text_raw
+            if ref_opened == False:
+                nonref_text_raw += ins_raw[i]
+
+        # process acculumated text
+        if nonref_text_raw:
+            # sentences = sent_tokenize(nonref_text_raw) # split into sentences
+            text_additions.add(nonref_text_raw) # add to set
+            nonref_text_raw = "" # reset accumulated text for next element
+    """
+
+    return text_additions
 
     
     # keep only the #mw-content-text div.
