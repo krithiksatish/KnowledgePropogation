@@ -347,7 +347,7 @@ def get_diff_page_link(wiki_id: str, newer_rev_id: str, older_rev_id: str) -> st
 
 # Example call: get_diff_between_two_revisions(TimCook, )
 def get_diff_between_two_revisions(wiki_id: str, newer_rev_id: str, older_rev_id: str) -> Dict[str, str]:
-    
+
     diff_url = get_diff_page_link(wiki_id, newer_rev_id, older_rev_id)
     # ex. diff_url = https://en.wikipedia.org/w/index.php?title=Tim_Cook&diff=1194639363&oldid=1189697434
-    get_diff_text(diff_url)
+    return get_diff_text(diff_url, 'enwiki')

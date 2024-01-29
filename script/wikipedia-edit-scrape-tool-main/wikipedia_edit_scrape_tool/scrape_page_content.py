@@ -405,57 +405,55 @@ def get_diff_text(diff_page_url: str, lang_wiki: str) -> set[str]:
             continue
 
     soup = bs4.BeautifulSoup(html, 'html.parser')
+
+    #NOTE: In working condition, but works really badly
+    #Only prints the edits. After working, will change to return a set of edits instead of printing
+
+    # REGEX could probs be made better
     
-    text_addition_elements = soup.find_all('ins', class_='diffchange diffchange-inline')
-    text_addition_raw = {elem.get_text(strip=True) for elem in text_addition_elements}
+    text_addition_blocks = soup.find_all('td', class_='diff-addedline diff-side-added')
 
-    return text_addition_raw
+    # Loop through each block
+    for addition_block in text_addition_blocks:
+        # Grab div within it (each addition_block should only have one div)
+        addition_div = addition_block.find('div')
 
-    """
-    text_additions = set()
-    ref_opened = False
-    nonref_text_raw = ""
+        if addition_div:
+            # Find all the <ins> tag (which represents an edit)
+            ins_tags = addition_div.find_all('ins', class_='diffchange diffchange-inline')
+            
+            # Each block may have multiple edits, iterate through each one
+            for ins_tag in ins_tags:
+                # ins_tag.text contain the text of the edit
 
-    # iterate through each 'ins' element with diffchange diffchange-inline class
-    ins_elements = soup.find_all('ins', class_='diffchange diffchange-inline')
+                # Following code attempts to get the sentence containing the edit (does it really badly)
+                previous_sibling = ins_tag.previous_sibling
+                next_sibling = ins_tag.next_sibling
+
+                start_of_sentence = ""
+                end_of_sentence = ""
+
+                if previous_sibling:
+                    start_sentence_match = re.search(r'[^.!?]+[.!?]\s*$', previous_sibling[::-1])
+                    if start_sentence_match:
+                        start_of_sentence = start_sentence_match.group(0)[::-1].strip()
+                    else:
+                        # If no matches, just use previous_sibling as the beginning of the sentence
+                        start_of_sentence = previous_sibling
+            
+                if next_sibling:
+                    end_sentence_match = re.match(r'(.*?)(?=[.!?])', next_sibling)
+                    if end_sentence_match:
+                        end_of_sentence = end_sentence_match.group(0)
+                    else:
+                        # If no matches, just use next_sibling as the end of the sentence
+                        end_of_sentence = next_sibling
+
+                sentence = start_of_sentence + ins_tag.text + end_of_sentence
+
+                print(sentence)
+                print()
+
     
-    for ins in ins_elements:
-        # traverse html character by character to check for <ref> tags
-        ins_raw = str(ins)
-        for i in range(len(ins_raw)):
-            if ins_raw.startswith('<ref>', i):  # check for opening <ref>
-                ref_opened = True
-            elif ins_raw.startswith('</ref>', i):  # check for closing </ref>
-                ref_opened = False
-                i += 5  # move index past the closing </ref> tag
-
-            # if not within <ref> tags, add character to nonref_text_raw
-            if ref_opened == False:
-                nonref_text_raw += ins_raw[i]
-
-        # process acculumated text
-        if nonref_text_raw:
-            # sentences = sent_tokenize(nonref_text_raw) # split into sentences
-            text_additions.add(nonref_text_raw) # add to set
-            nonref_text_raw = "" # reset accumulated text for next element
-    """
-
-    return text_additions
-
-    
-    # keep only the #mw-content-text div.
-    # content_div = soup.find('div', id='mw-content-text')
-
-    # ### Step 2 removing large swathes of the page
-    # remove_non_sentences(content_div, diff_page_url) # NOTE: warning, this modifies the content_div in place.
-
-    # # iterate over the children of the content div. 
-    # important_content_elems = []
-    # print("looking for p, h2, h3")
-    # for element in soup.find_all(lambda tag: tag.name in ['p', 'h2', 'h3']):
-    #     if element.name == 'p':
-    #         important_content_elems.append(clean_paragraph(element))
-    #     elif element.name == 'h2' or element.name == 'h3':
-    #         important_content_elems.append(clean_header(element))
-    # # TODO: add call to filter headers for empty sections.
-    # return important_content_elems
+    # Returns empty set for now
+    return set()
