@@ -404,56 +404,112 @@ def get_diff_text(diff_page_url: str, lang_wiki: str) -> set[str]:
             print("timeout error")
             continue
 
+    sentence_set = set()
     soup = bs4.BeautifulSoup(html, 'html.parser')
-
-    #NOTE: In working condition, but works really badly
-    #Only prints the edits. After working, will change to return a set of edits instead of printing
-
-    # REGEX could probs be made better
-    
     text_addition_blocks = soup.find_all('td', class_='diff-addedline diff-side-added')
 
     # Loop through each block
     for addition_block in text_addition_blocks:
+        total_block_text = ""
+        edits_range_list = []
+
         # Grab div within it (each addition_block should only have one div)
         addition_div = addition_block.find('div')
 
         if addition_div:
-            # Find all the <ins> tag (which represents an edit)
-            ins_tags = addition_div.find_all('ins', class_='diffchange diffchange-inline')
+            for child in addition_div.children:
+                # if the child is a string, add it to the total_block_text
+                if isinstance(child, bs4.element.NavigableString):
+                    total_block_text += child
+                
+                # if the child is an ins element with classes diffchange and diffchange-inline, 
+                # get text and add range to list
+                elif (child.name == 'ins' and 'diffchange' in child.get('class', []) 
+                                          and 'diffchange-inline' in child.get('class', [])):
+                    ins_text = child.text
+                    
+                    # store range in dict - start index (inclusive), end index (exclusive)
+                    ins_range = {'start': len(total_block_text), 'end': len(total_block_text) + len(ins_text)}
+                    edits_range_list.append(ins_range)
+                    total_block_text += ins_text
+
+        # first check: if edits_range_list is empty, skip this block and go to next block
+        if (not edits_range_list):
+            continue
+
+        while True:
+            # match <ref...>...</ref> and * {{cite...}}
+            ref_regex = r'(<ref.*?>.*?</ref>|\*\s*\{\{cite.*?\}\})'
+            match = re.search(ref_regex, total_block_text, flags=re.DOTALL)
             
-            # Each block may have multiple edits, iterate through each one
-            for ins_tag in ins_tags:
-                # ins_tag.text contain the text of the edit
-
-                # Following code attempts to get the sentence containing the edit (does it really badly)
-                previous_sibling = ins_tag.previous_sibling
-                next_sibling = ins_tag.next_sibling
-
-                start_of_sentence = ""
-                end_of_sentence = ""
-
-                if previous_sibling:
-                    start_sentence_match = re.search(r'[^.!?]+[.!?]\s*$', previous_sibling[::-1])
-                    if start_sentence_match:
-                        start_of_sentence = start_sentence_match.group(0)[::-1].strip()
-                    else:
-                        # If no matches, just use previous_sibling as the beginning of the sentence
-                        start_of_sentence = previous_sibling
+            # break if no more matches
+            if not match:
+                break
             
-                if next_sibling:
-                    end_sentence_match = re.match(r'(.*?)(?=[.!?])', next_sibling)
-                    if end_sentence_match:
-                        end_of_sentence = end_sentence_match.group(0)
-                    else:
-                        # If no matches, just use next_sibling as the end of the sentence
-                        end_of_sentence = next_sibling
+            # get start and end indices of ref tag
+            start, end = match.span()
+            removal_length = end - start
+            
+            # remove the ref tag from the text
+            total_block_text = total_block_text[:start] + total_block_text[end:]
+            
+            # update edit ranges
+            for i in range(len(edits_range_list)):
+                # vars for start and end of edit range (for readability)
+                edit_range = edits_range_list[i]
+                edit_start, edit_end = edit_range['start'], edit_range['end']
 
-                sentence = start_of_sentence + ins_tag.text + end_of_sentence
+                # case 1: if ref tag removed completely before edit range
+                if end <= edit_start:
+                    edits_range_list[i] = ({'start': edit_start - removal_length, 
+                                            'end': edit_end - removal_length})
+                # case 2: if ref tag overlaps only the beginning of edit range
+                elif start < edit_start < end < edit_end:
+                    edits_range_list[i] = ({'start': start, 
+                                            'end': edit_end - removal_length})
+                # case 3: if ref tag overlaps only the end of edit range
+                elif end > edit_end > start > edit_start:
+                    edits_range_list[i] = ({'start': edit_start, 'end': start})
+                # case 4: if ref tag encompasses the entire edit range
+                elif start <= edit_start and edit_end <= end:
+                    edits_range_list[i] = None
+                # case 5: if ref tag is within the edit range
+                elif start > edit_start and edit_end > end:
+                    edits_range_list[i] = ({'start': edit_start, 'end': start})
+            
+            # remove None values from edits_range_list
+            edits_range_list = [rg for rg in edits_range_list if rg is not None]
 
-                print(sentence)
-                print()
+        # second check: if edits_range_list is empty, skip this block and go to next block
+        if (not edits_range_list):
+            continue
 
+        # split text into sentences
+        sentence_ranges = [(m.start(0), m.end(0)) for m in re.finditer(r'\S.*?\.', total_block_text)]
+
+        for edit_range in edits_range_list:
+            e_start, e_end = edit_range['start'], edit_range['end']
+            
+            # init vars for edit sentence range
+            edit_sent_start, edit_sent_end, edit_sent_range = None, None, None
+           
+            # iterate thru sentence ranges to find the sentence range that the edit range is in
+            for sentence_range in sentence_ranges:
+                s_start, s_end = sentence_range[0], sentence_range[1]
+                
+                # if start index is in current sentence range, set edit_sent_start to s_start
+                if (s_start <= e_start <= s_end):
+                    edit_sent_start = s_start
+                
+                # if end index is in current sentence range, set edit_sent_end to s_end
+                if (s_start <= e_end <= s_end):
+                    edit_sent_end = s_end
+            
+            # if both edit_sent_start and edit_sent_end are not None, set edit_sent_range, and add to set
+            if (edit_sent_start is not None and edit_sent_end is not None):
+                edit_sent_range = (edit_sent_start, edit_sent_end)
+
+            if (edit_sent_range):
+                sentence_set.add(total_block_text[edit_sent_range[0]:edit_sent_range[1]])     
     
-    # Returns empty set for now
-    return set()
+    return sentence_set
