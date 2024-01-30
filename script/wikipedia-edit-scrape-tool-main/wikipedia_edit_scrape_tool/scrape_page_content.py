@@ -403,6 +403,8 @@ def get_diff_text(diff_page_url: str, lang_wiki: str) -> set[str]:
         except requests.exceptions.Timeout:
             print("timeout error")
             continue
+    
+    # TODO: We should consider abbreviation edge cases during sentence extraction
 
     sentence_set = set()
     soup = bs4.BeautifulSoup(html, 'html.parser')
@@ -485,7 +487,7 @@ def get_diff_text(diff_page_url: str, lang_wiki: str) -> set[str]:
             continue
 
         # split text into sentences
-        sentence_ranges = [(m.start(0), m.end(0)) for m in re.finditer(r'\S.*?\.', total_block_text)]
+        sentence_ranges = [(m.start(0), m.end(0)) for m in re.finditer(r'\S.*?[.!?]', total_block_text)]
 
         for edit_range in edits_range_list:
             e_start, e_end = edit_range['start'], edit_range['end']
