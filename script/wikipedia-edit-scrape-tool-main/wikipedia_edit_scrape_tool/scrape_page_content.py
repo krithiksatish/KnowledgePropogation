@@ -404,9 +404,13 @@ def get_diff_text(diff_page_url: str, lang_wiki: str) -> set[str]:
             print("timeout error")
             continue
     
-    # TODO: We should consider abbreviation edge cases during sentence extraction
+    # TODO: 
+    #   We should consider abbreviation edge cases during sentence extraction
+    #   Sometimes duplicate sentences are added to the set, eg. "Sentence A", "Sentence B", 
+    #       then "Sentence A. Sentence B" together. Need to fix this.
 
     sentence_set = set()
+    refs_set = set()
     soup = bs4.BeautifulSoup(html, 'html.parser')
     text_addition_blocks = soup.find_all('td', class_='diff-addedline diff-side-added')
 
@@ -452,9 +456,6 @@ def get_diff_text(diff_page_url: str, lang_wiki: str) -> set[str]:
             start, end = match.span()
             removal_length = end - start
             
-            # remove the ref tag from the text
-            total_block_text = total_block_text[:start] + total_block_text[end:]
-            
             # update edit ranges
             for i in range(len(edits_range_list)):
                 # vars for start and end of edit range (for readability)
@@ -465,19 +466,34 @@ def get_diff_text(diff_page_url: str, lang_wiki: str) -> set[str]:
                 if end <= edit_start:
                     edits_range_list[i] = ({'start': edit_start - removal_length, 
                                             'end': edit_end - removal_length})
+                
                 # case 2: if ref tag overlaps only the beginning of edit range
                 elif start < edit_start < end < edit_end:
                     edits_range_list[i] = ({'start': start, 
                                             'end': edit_end - removal_length})
+                     # add ref tag to set of updated refs
+                    refs_set.add(total_block_text[start:end])
+                
                 # case 3: if ref tag overlaps only the end of edit range
                 elif end > edit_end > start > edit_start:
                     edits_range_list[i] = ({'start': edit_start, 'end': start})
+                    # add ref tag to set of updated refs
+                    refs_set.add(total_block_text[start:end])
+                
                 # case 4: if ref tag encompasses the entire edit range
                 elif start <= edit_start and edit_end <= end:
                     edits_range_list[i] = None
+                    # add ref tag to set of updated refs
+                    refs_set.add(total_block_text[start:end])
+                
                 # case 5: if ref tag is within the edit range
                 elif start > edit_start and edit_end > end:
                     edits_range_list[i] = ({'start': edit_start, 'end': start})
+                    # add ref tag to set of updated refs
+                    refs_set.add(total_block_text[start:end])
+            
+            # remove the ref tag from the text
+            total_block_text = total_block_text[:start] + total_block_text[end:]
             
             # remove None values from edits_range_list
             edits_range_list = [rg for rg in edits_range_list if rg is not None]
@@ -514,4 +530,4 @@ def get_diff_text(diff_page_url: str, lang_wiki: str) -> set[str]:
             if (edit_sent_range):
                 sentence_set.add(total_block_text[edit_sent_range[0]:edit_sent_range[1]])     
     
-    return sentence_set
+    return sentence_set, refs_set
