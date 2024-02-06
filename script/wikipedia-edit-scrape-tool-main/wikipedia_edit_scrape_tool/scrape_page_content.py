@@ -423,21 +423,34 @@ def get_diff_text(diff_page_url: str, lang_wiki: str) -> set[str]:
         addition_div = addition_block.find('div')
 
         if addition_div:
-            for child in addition_div.children:
-                # if the child is a string, add it to the total_block_text
-                if isinstance(child, bs4.element.NavigableString):
-                    total_block_text += child
-                
-                # if the child is an ins element with classes diffchange and diffchange-inline, 
-                # get text and add range to list
-                elif (child.name == 'ins' and 'diffchange' in child.get('class', []) 
-                                          and 'diffchange-inline' in child.get('class', [])):
-                    ins_text = child.text
+            # if addition div only has one child of type string, this means the entire div 
+            # is added text, so add entire range to list
+            if (len(addition_div.contents) == 1 and
+                isinstance(addition_div.contents[0], bs4.element.NavigableString)):
+
+                ins_text = addition_div.text
+                ins_range = {'start': 0, 'end': len(ins_text)}
+                edits_range_list.append(ins_range)
+                total_block_text += ins_text
+            
+            # else, addition div has multiple children, iterate through them and find the 
+            # exact ranges of added text
+            else:
+                for child in addition_div.children:                
+                    # if the child is a string, add it to the total_block_text
+                    if isinstance(child, bs4.element.NavigableString):
+                        total_block_text += child
                     
-                    # store range in dict - start index (inclusive), end index (exclusive)
-                    ins_range = {'start': len(total_block_text), 'end': len(total_block_text) + len(ins_text)}
-                    edits_range_list.append(ins_range)
-                    total_block_text += ins_text
+                    # if the child is an ins element with classes diffchange and diffchange-inline, 
+                    # get text and add range to list
+                    elif (child.name == 'ins' and 'diffchange' in child.get('class', []) 
+                                            and 'diffchange-inline' in child.get('class', [])):
+                        ins_text = child.text
+                        
+                        # store range in dict - start index (inclusive), end index (exclusive)
+                        ins_range = {'start': len(total_block_text), 'end': len(total_block_text) + len(ins_text)}
+                        edits_range_list.append(ins_range)
+                        total_block_text += ins_text
 
         # first check: if edits_range_list is empty, skip this block and go to next block
         if (not edits_range_list):
