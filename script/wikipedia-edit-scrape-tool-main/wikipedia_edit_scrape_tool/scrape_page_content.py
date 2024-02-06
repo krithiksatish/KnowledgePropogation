@@ -388,7 +388,7 @@ def get_info(wiki_link: str, lang_wiki: str):
     return wiki_link, person_info
 
 
-def get_diff_text(diff_page_url: str, lang_wiki: str) -> set[str]:
+def get_diff_text(diff_page_url: str, lang_wiki: str) -> List[str]:
     # Goal of function: given a url of the diff page, return a set of strings (ideally sentences)
     # that contains all the yellow highlights (the added sentences)
 
@@ -409,7 +409,7 @@ def get_diff_text(diff_page_url: str, lang_wiki: str) -> set[str]:
     #   Sometimes duplicate sentences are added to the set, eg. "Sentence A", "Sentence B", 
     #       then "Sentence A. Sentence B" together. Need to fix this.
 
-    sentence_set = set()
+    sentence_set = []
     refs_set = set()
     soup = bs4.BeautifulSoup(html, 'html.parser')
     text_addition_blocks = soup.find_all('td', class_='diff-addedline diff-side-added')
@@ -423,8 +423,8 @@ def get_diff_text(diff_page_url: str, lang_wiki: str) -> set[str]:
         addition_div = addition_block.find('div')
 
         if addition_div:
-            # if addition div only has one child of type string, this means the entire div 
-            # is added text, so add entire range to list
+            # if addition div only has one child of type string , this means the entire 
+            # div is added text, so add entire range to list
             if (len(addition_div.contents) == 1 and
                 isinstance(addition_div.contents[0], bs4.element.NavigableString)):
 
@@ -447,6 +447,12 @@ def get_diff_text(diff_page_url: str, lang_wiki: str) -> set[str]:
                                             and 'diffchange-inline' in child.get('class', [])):
                         ins_text = child.text
                         
+                        # if text is space or punctuation only, skip
+                        punctuation_regex = re.compile(r"^[?!,.\":;—]+$")
+                        if not ins_text.strip() or punctuation_regex.match(ins_text.strip()):
+                            total_block_text += ins_text
+                            continue
+
                         # store range in dict - start index (inclusive), end index (exclusive)
                         ins_range = {'start': len(total_block_text), 'end': len(total_block_text) + len(ins_text)}
                         edits_range_list.append(ins_range)
@@ -455,6 +461,35 @@ def get_diff_text(diff_page_url: str, lang_wiki: str) -> set[str]:
         # first check: if edits_range_list is empty, skip this block and go to next block
         if (not edits_range_list):
             continue
+
+        # secondary check: if there is a deletion block sibling (should be a previous sibling), compare
+        # full text of both blocks convert to lowercase and remove punctuation and spaces for comparison 
+        # - if they are the same, skip this block
+        deletion_block = addition_block.find_previous_sibling('td', class_='diff-deletedline diff-side-deleted')
+        deletion_block_text = ""
+        deletion_block_text_no_deletions = ""
+        if deletion_block:
+            # get div within deletion block
+            deletion_div = deletion_block.find('div')
+    
+            if deletion_div:
+                for child in deletion_div.children:
+                    if isinstance(child, bs4.element.NavigableString):
+                        deletion_block_text += child
+                        deletion_block_text_no_deletions += child
+                    elif (child.name == 'del' and 'diffchange' in child.get('class', []) 
+                                            and 'diffchange-inline' in child.get('class', [])):
+                        del_text = child.text
+                        deletion_block_text += del_text
+                
+            # strip all spaces, punctuation, and convert to lowercase for both texts
+            add_text_stripped = re.sub(r'[?!,.\":;—\s]+', '', total_block_text).lower()
+            del_text_stripped = re.sub(r'[?!,.\":;—\s]+', '', deletion_block_text).lower()
+            del_text_no_deletions_stripped = re.sub(r'[?!,.\":;—\s]+', '', deletion_block_text_no_deletions).lower()
+
+            # if texts are the same without spaces and punctuation, or without deletions, skip this block
+            if (add_text_stripped == del_text_stripped or add_text_stripped == del_text_no_deletions_stripped):
+                continue
 
         while True:
             # match <ref...>...</ref> and * {{cite...}}
@@ -500,7 +535,7 @@ def get_diff_text(diff_page_url: str, lang_wiki: str) -> set[str]:
                     refs_set.add(total_block_text[start:end])
                 
                 # case 5: if ref tag is within the edit range
-                elif start > edit_start and edit_end > end:
+                elif start >= edit_start and edit_end >= end:
                     edits_range_list[i] = ({'start': edit_start, 'end': start})
                     # add ref tag to set of updated refs
                     refs_set.add(total_block_text[start:end])
@@ -511,36 +546,64 @@ def get_diff_text(diff_page_url: str, lang_wiki: str) -> set[str]:
             # remove None values from edits_range_list
             edits_range_list = [rg for rg in edits_range_list if rg is not None]
 
-        # second check: if edits_range_list is empty, skip this block and go to next block
+        # check again if edits_range_list is empty, skip this block and go to next block
         if (not edits_range_list):
             continue
 
-        # split text into sentences
-        sentence_ranges = [(m.start(0), m.end(0)) for m in re.finditer(r'\S.*?[.!?]', total_block_text)]
+        # split text into sentences (preserve space before sentence start if not first sentence)
+        # sentence_ranges = [(m.start(0), m.end(0)) for m in re.finditer(r'\S.*?[.!?]', total_block_text)]
+        sentence_ranges = [(m.start(0) if m.start(0) == 0 else m.start(0) - 1, m.end(0)) 
+                           for m in re.finditer(r'\S.*?[.!?]', total_block_text)]
+        
+        # if end of last range is not end of text, add the rest of the text as a sentence
+        if sentence_ranges and sentence_ranges[-1][1] != len(total_block_text):
+            sentence_ranges.append((sentence_ranges[-1][1], len(total_block_text)))
+        
+        # if no sentence ranges, add entire text as a sentence
+        if not sentence_ranges:
+            sentence_ranges.append((0, len(total_block_text)))
+
+        # make a list to keep track of which sentences contain the edit ranges
+        sentence_indices_state = [False] * len(sentence_ranges)
 
         for edit_range in edits_range_list:
             e_start, e_end = edit_range['start'], edit_range['end']
             
-            # init vars for edit sentence range
-            edit_sent_start, edit_sent_end, edit_sent_range = None, None, None
+            # init vars for edit sentences range
+            start_sentence_idx, end_sentence_idx = None, None
            
             # iterate thru sentence ranges to find the sentence range that the edit range is in
-            for sentence_range in sentence_ranges:
+            for i, sentence_range in enumerate(sentence_ranges):
                 s_start, s_end = sentence_range[0], sentence_range[1]
                 
                 # if start index is in current sentence range, set edit_sent_start to s_start
-                if (s_start <= e_start <= s_end):
-                    edit_sent_start = s_start
+                if (s_start <= e_start < s_end):
+                    start_sentence_idx = i
                 
                 # if end index is in current sentence range, set edit_sent_end to s_end
-                if (s_start <= e_end <= s_end):
-                    edit_sent_end = s_end
-            
-            # if both edit_sent_start and edit_sent_end are not None, set edit_sent_range, and add to set
-            if (edit_sent_start is not None and edit_sent_end is not None):
-                edit_sent_range = (edit_sent_start, edit_sent_end)
+                if (s_start < e_end <= s_end):
+                    end_sentence_idx = i
+                    break
 
-            if (edit_sent_range):
-                sentence_set.add(total_block_text[edit_sent_range[0]:edit_sent_range[1]])     
+            # if both start and end sentence indices are found, set the state of the sentences
+            # to True (and the sentences between to them)
+            if (start_sentence_idx is not None and end_sentence_idx is not None):
+                for i in range(start_sentence_idx, end_sentence_idx+1):
+                    sentence_indices_state[i] = True
+
+        # add the sentences that contain the edit ranges to the set (append sentences next to each other)
+        sentences_to_add = ""
+        for i, sentence_range in enumerate(sentence_ranges):
+            if sentence_indices_state[i]:
+                sentences_to_add += total_block_text[sentence_range[0]:sentence_range[1]]
+            else:
+                if sentences_to_add:
+                    # strip potential spaces at front of text and add sentence to set
+                    sentence_set.append(sentences_to_add.lstrip())
+                    sentences_to_add = ""
+        
+        # if there are sentences left in sentences_to_add, add them to the set
+        if sentences_to_add:
+            sentence_set.append(sentences_to_add.lstrip())
     
     return sentence_set, refs_set
