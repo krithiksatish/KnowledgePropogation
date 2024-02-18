@@ -13,14 +13,27 @@
 from math import log
 import string
 import time
+import nltk
+from nltk.corpus import stopwords
+
+# Download NLTK stopwords if not already downloaded
+nltk.download('stopwords')
+
+# Load the English stopwords
+stop_words = set(stopwords.words('english'))
+
+# Function to remove stopwords from a list of tokens
+def remove_stopwords(tokens):
+    return [token for token in tokens if token not in stop_words]
 
 def simple_tokenizer(document):
     if isinstance(document, str):
         translator = str.maketrans("", "", string.punctuation)
-        return document.lower().translate(translator).split()  # removed None from split
+        tokens = document.lower().translate(translator).split(None)
+        return remove_stopwords(tokens)
     elif isinstance(document, list):
         # Assuming each element of the list is a line in the document
-        return [line.lower().translate(str.maketrans("", "", string.punctuation)).split() for line in document]
+        return [remove_stopwords(line.lower().translate(str.maketrans("", "", string.punctuation)).split(None)) for line in document]
     else:
         raise ValueError("Invalid input type for simple_tokenizer")
 
@@ -148,8 +161,8 @@ with open("pile_val_pubmedabstract.txt", "r") as file:
 lines_per_document = 20
 document_tokens_list = [simple_tokenizer(document) for document in split_into_documents(content, lines_per_document)]
 
-query = "and are of certain changes in the"
-
+query = "Effect of sleep quality on memory, executive function, and language performance in patients"
+query = query.lower()
 term_doc_counts = {}
 for document_tokens in document_tokens_list:
     unique_tokens = set(token for sublist in document_tokens for token in sublist)

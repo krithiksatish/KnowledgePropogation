@@ -7,14 +7,27 @@
 from math import log
 import string
 import time
+import nltk
+from nltk.corpus import stopwords
+
+# Download NLTK stopwords if not already downloaded
+nltk.download('stopwords')
+
+# Load the English stopwords
+stop_words = set(stopwords.words('english'))
+
+# Function to remove stopwords from a list of tokens
+def remove_stopwords(tokens):
+    return [token for token in tokens if token not in stop_words]
 
 def simple_tokenizer(document):
     if isinstance(document, str):
         translator = str.maketrans("", "", string.punctuation)
-        return document.lower().translate(translator).split(None) # probably need to change this 
+        tokens = document.lower().translate(translator).split(None)
+        return remove_stopwords(tokens)
     elif isinstance(document, list):
         # Assuming each element of the list is a line in the document
-        return [line.lower().translate(str.maketrans("", "", string.punctuation)).split(None) for line in document]
+        return [remove_stopwords(line.lower().translate(str.maketrans("", "", string.punctuation)).split(None)) for line in document]
     else:
         raise ValueError("Invalid input type for simple_tokenizer")
 
@@ -86,30 +99,40 @@ def print_top_documents(document_scores, top_n=5):
     print("\nTop Documents:")
     for rank, (document_idx, score) in enumerate(sorted_documents, start=1):
         print(f"Rank {rank}: Document {document_idx} - Total TF-IDF Score: {score}")
-
 def tf_idf_report(query, document_tokens_list, idf_values, total_docs, term_doc_counts):
     print("Query:", query)
     print("Number of documents:", len(document_tokens_list))
 
-    document_scores = calculate_document_scores(query, document_tokens_list, idf_values, total_docs, term_doc_counts)
+    # Tokenize the query
+    query_tokens = simple_tokenizer(query)
+
+    document_scores = calculate_document_scores(" ".join(query_tokens), document_tokens_list, idf_values, total_docs, term_doc_counts)
 
     sorted_documents = sorted(document_scores, key=lambda x: x[1], reverse=True)[:5]
 
     for i, (document_idx, score) in enumerate(sorted_documents, start=1):
-        document_tokens = document_tokens_list[document_idx]
+        document_tokens = document_tokens_list[document_idx - 1]  # Adjust index to start from 0
 
         print("\nDocument", document_idx, "Report:")
         print("First 5 document tokens:", document_tokens[:5])
         print("Token count in document:", token_count(document_tokens))
 
-        for term in query.split():
+        document_score = 0  # Initialize document score
+        for term in query_tokens:
             print("\nTerm:", term)
             print("Term count in document:", term_count(term, document_tokens))
             print("TF:\t\t", term_frequency(term, document_tokens))
             print("IDF:\t\t", inverse_document_frequency(term, total_docs, term_doc_counts, idf_values))
-            print("TF--IDF:\t", tf_idf(term, document_tokens, document_tokens_list, idf_values))
+            tfidf_score = tf_idf(term, document_tokens, document_tokens_list, idf_values)
+            print("TF--IDF:\t", tfidf_score)
+            document_score += tfidf_score  # Accumulate the TF-IDF score for this term
+
+        print("Total TF-IDF Score for Document", document_idx, ":", document_score)  # Print total TF-IDF score for the document
 
     print_top_documents(document_scores)
+
+
+
 
 start_time = time.time()
 # Read content from the text file
@@ -123,11 +146,13 @@ document_tokens_list = [simple_tokenizer(document) for document in split_into_do
 
 # Simple sample usage with a query string
 #query = "No compensation is announced for other victims"
-query = "and are of certain changes in the"
+query =  "Effect of sleep quality on memory, executive function, and language performance in patients"
 # for term in query.split():
 #     term_counts = [term_count(term, document_tokens) for document_tokens in document_tokens_list]
 #     print(f"Term: {term}, Counts: {term_counts}")
 # Count term occurrences in documents
+query = query.lower()
+
 term_doc_counts = {}
 for document_tokens in document_tokens_list:
     unique_tokens = set(token for sublist in document_tokens for token in sublist)
