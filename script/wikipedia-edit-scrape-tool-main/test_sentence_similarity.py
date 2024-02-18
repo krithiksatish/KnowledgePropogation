@@ -3,72 +3,79 @@ from wikipedia_edit_scrape_tool.sentence_simlarity import SentenceSimilarityCalc
 
 similarity_calculator = SentenceSimilarityCalculator()
 
-# sentences = [
-#     ("Wikipedia is a free online encyclopedia, created and edited by volunteers around the world.",
-#      "Wikipedia is a freely accessible online encyclopedia, created and edited collaboratively by volunteers worldwide."),
-#     ("The capital of France is Paris.",
-#      "Paris is the capital city of France."),
-#     ("The Earth revolves around the Sun.",
-#      "The Sun is orbited by the Earth."),
-#     ("Albert Einstein was a theoretical physicist.",
-#      "Albert Einstein was a German-born theoretical physicist who developed the theory of relativity."),
-#     ("The Mona Lisa is a famous painting by Leonardo da Vinci.",
-#      "The Mona Lisa, a masterpiece of Renaissance art, is one of the most famous paintings in the world."),
-#     ("The Industrial Revolution marked a significant turning point in history.",
-#      "The Industrial Revolution was a period of major changes in the economy, technology, and society."),
-#     ("The Great Wall of China is a UNESCO World Heritage Site.",
-#      "The Great Wall of China, one of the most impressive architectural feats in history, is a UNESCO World Heritage Site."),
-#     ("The human brain is composed of billions of neurons.",
-#      "The brain, a complex organ, consists of billions of specialized cells called neurons."),
-#     ("Mount Everest is the highest mountain in the world.",
-#      "Mount Everest, the tallest peak on Earth, is located in the Himalayas."),
-#     ("Rome is the capital city of Italy.",
-#      "The capital of Italy is Rome.")
-# ]
+sentences = [
+    ("Wikipedia is a free online encyclopedia, created and edited by volunteers around the world.",
+     "Wikipedia is a freely accessible online encyclopedia, created and edited collaboratively by volunteers worldwide."),
+    ("The capital of France is Paris.",
+     "Paris is the capital city of France."),
+    ("The Earth revolves around the Sun.",
+     "The Sun is orbited by the Earth."),
+    ("Albert Einstein was a theoretical physicist.",
+     "Albert Einstein was a German-born theoretical physicist who developed the theory of relativity."),
+    ("The Mona Lisa is a famous painting by Leonardo da Vinci.",
+     "The Mona Lisa, a masterpiece of Renaissance art, is one of the most famous paintings in the world."),
+    ("The Industrial Revolution marked a significant turning point in history.",
+     "The Industrial Revolution was a period of major changes in the economy, technology, and society."),
+    ("The Great Wall of China is a UNESCO World Heritage Site.",
+     "The Great Wall of China, one of the most impressive architectural feats in history, is a UNESCO World Heritage Site."),
+    ("The human brain is composed of billions of neurons.",
+     "The brain, a complex organ, consists of billions of specialized cells called neurons."),
+    ("Mount Everest is the highest mountain in the world.",
+     "Mount Everest, the tallest peak on Earth, is located in the Himalayas."),
+    ("Rome is the capital city of Italy.",
+     "The capital of Italy is Rome.")
+]
 
-# additional_sentences = [
-#     ("The cat sat on the mat.",
-#      "A feline was positioned on the straw mat."),
-#     ("Pizza is a popular dish.",
-#      "Pizza is widely enjoyed, often topped with ingredients like pepperoni and extra cheese."),
-#     ("The weather is pleasant today.",
-#      "Today's weather is characterized by clear skies and a gentle breeze."),
-#     ("She walked to the store.",
-#      "She proceeded on foot to the nearby store."),
-#     ("The meeting was highly productive.",
-#      "The meeting resulted in significant progress, culminating in the development of a comprehensive plan."),
-#     ("Grocery shopping is necessary.",
-#      "Procuring groceries is imperative due to an empty refrigerator."),
-#     ("He is recognized as a talented musician.",
-#      "He is acknowledged for his musical talent and skillful performances."),
-#     ("The book was engaging.",
-#      "The book held readers' attention with its intriguing plot twists."),
-#     ("They embarked on a hiking trip.",
-#      "They undertook a hiking expedition, equipped with essential gear such as sturdy boots and backpacks."),
-#     ("She wore an elegant dress.",
-#      "She donned an elegant gown, embellished with intricate lace and shimmering beads.")
-# ]
+additional_sentences = [
+    ("The cat sat on the mat.",
+     "A feline was positioned on the straw mat."),
+    ("Pizza is a popular dish.",
+     "Pizza is widely enjoyed, often topped with ingredients like pepperoni and extra cheese."),
+    ("The weather is pleasant today.",
+     "Today's weather is characterized by clear skies and a gentle breeze."),
+    ("She walked to the store.",
+     "She proceeded on foot to the nearby store."),
+    ("The meeting was highly productive.",
+     "The meeting resulted in significant progress, culminating in the development of a comprehensive plan."),
+    ("Grocery shopping is necessary.",
+     "Procuring groceries is imperative due to an empty refrigerator."),
+    ("He is recognized as a talented musician.",
+     "He is acknowledged for his musical talent and skillful performances."),
+    ("The book was engaging.",
+     "The book held readers' attention with its intriguing plot twists."),
+    ("They embarked on a hiking trip.",
+     "They undertook a hiking expedition, equipped with essential gear such as sturdy boots and backpacks."),
+    ("She wore an elegant dress.",
+     "She donned an elegant gown, embellished with intricate lace and shimmering beads.")
+]
 
-# for edit_pair in comparison_sentences:
-#     print("Original: " + edit_pair[0])
-#     print("Edited: " + edit_pair[1])
-#     print("Similarity: " + str(similarity_calculator.is_signifcant_edit(edit_pair[0], edit_pair[1])))
+for edit_pair in sentences:
+    print("Original: " + edit_pair[0])
+    print("Edited: " + edit_pair[1])
+    print("Similarity: " + str(similarity_calculator.is_signifcant_edit(edit_pair[0], edit_pair[1])))
 
-#     print()
+    print()
+
+for edit_pair in additional_sentences:
+    print("Original: " + edit_pair[0])
+    print("Edited: " + edit_pair[1])
+    print("Similarity: " + str(similarity_calculator.is_signifcant_edit(edit_pair[0], edit_pair[1])))
+
+    print()
 
 
 comparison_sentences = [
     ("Deep learning is a subset of machine learning methods based on artificial neural networks with representation learning.",
     "Deep learning is a type of machine learning methods based on artificial neural networks with representation learning.",
-    "Machine learning methods, including deep learning, rely on artificial neural networks with representation learning.",
     "Deep learning, which involves artificial neural networks, is a subset of machine learning methods with representation learning.",
-    "Artificial neural networks form the foundation of deep learning, a subset of machine learning methods with representation learning."),
+    "In the landscape of machine learning, deep learning emerges as a unique methodology, characterized by its heavy reliance on artificial neural networks and representation learning, which enables the extraction of intricate patterns from vast datasets.",
+    "Artificial neural networks, pivotal to the field of deep learning, undergo representation learning, an essential process that distinguishes this subset within machine learning, revolutionizing various fields like healthcare, finance, and autonomous systems."),
     (
     "Mental illness is thought to be highly prevalent among homeless populations, though access to proper diagnoses is limited.",
-    "Homeless communities are believed to face significant mental health challenges, yet obtaining accurate diagnoses remains elusive.",
-    "The prevalence of mental illness among those experiencing homelessness is widely acknowledged, but obtaining proper diagnostic services is often hindered.",
-    "There is a common perception that homelessness is strongly correlated with high rates of mental illness, but accessing accurate diagnoses is a persistent challenge.",
-    "Homelessness is often associated with mental health issues, but obtaining precise diagnoses can be difficult due to various barriers.")
+    "It's widely believed that mental illness is disproportionately common among individuals experiencing homelessness, yet obtaining accurate diagnoses remains challenging.",
+    "Despite widespread assumptions about the high prevalence of mental illness among the homeless, the actual accessibility of accurate diagnoses remains a considerable challenge",
+    "The perception of a significant presence of mental illness among the homeless is prevalent, yet the reality of accessing precise diagnostic measures remains substantially restricted.",
+    "While mental health issues are commonly associated with homelessness, the limited availability of accurate diagnoses exacerbates the situation, leading to a lack of appropriate support.")
 ]
 
 
