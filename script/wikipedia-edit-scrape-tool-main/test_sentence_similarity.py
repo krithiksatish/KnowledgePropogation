@@ -52,16 +52,50 @@ additional_sentences = [
 for edit_pair in sentences:
     print("Original: " + edit_pair[0])
     print("Edited: " + edit_pair[1])
-    print("Similarity: " + str(similarity_calculator.calculate_similarity(edit_pair[0], edit_pair[1])))
+    print("Similarity: " + str(similarity_calculator.is_signifcant_edit(edit_pair[0], edit_pair[1])))
 
     print()
-
-print()
 
 for edit_pair in additional_sentences:
     print("Original: " + edit_pair[0])
     print("Edited: " + edit_pair[1])
-    print("Similarity: " + str(similarity_calculator.calculate_similarity(edit_pair[0], edit_pair[1])))
+    print("Similarity: " + str(similarity_calculator.is_signifcant_edit(edit_pair[0], edit_pair[1])))
 
     print()
+
+
+comparison_sentences = [
+    ("Deep learning is a subset of machine learning methods based on artificial neural networks with representation learning.",
+    "Deep learning is a type of machine learning methods based on artificial neural networks with representation learning.",
+    "Deep learning, which involves artificial neural networks, is a subset of machine learning methods with representation learning.",
+    "In the landscape of machine learning, deep learning emerges as a unique methodology, characterized by its heavy reliance on artificial neural networks and representation learning, which enables the extraction of intricate patterns from vast datasets.",
+    "Artificial neural networks, pivotal to the field of deep learning, undergo representation learning, an essential process that distinguishes this subset within machine learning, revolutionizing various fields like healthcare, finance, and autonomous systems."),
+    (
+    "Mental illness is thought to be highly prevalent among homeless populations, though access to proper diagnoses is limited.",
+    "It's widely believed that mental illness is disproportionately common among individuals experiencing homelessness, yet obtaining accurate diagnoses remains challenging.",
+    "Despite widespread assumptions about the high prevalence of mental illness among the homeless, the actual accessibility of accurate diagnoses remains a considerable challenge",
+    "The perception of a significant presence of mental illness among the homeless is prevalent, yet the reality of accessing precise diagnostic measures remains substantially restricted.",
+    "While mental health issues are commonly associated with homelessness, the limited availability of accurate diagnoses exacerbates the situation, leading to a lack of appropriate support.")
+]
+
+
+for comparison in comparison_sentences:
+    original_sentence = comparison[0]
+
+    for i in range(1, len(comparison)):
+        print("Original: " + original_sentence)
+        print("Edited: " + comparison[i])
+        print(str(similarity_calculator.is_signifcant_edit(original_sentence, comparison[i])))
+
+    print()
+
+
+# Testing edit distance
+# edit_distance_sentences = [
+#     ("the quick brown fox", "the smart quick fox")
+# ]
+
+# for edit_pair in edit_distance_sentences:
+#     print(edit_pair[0])
+#     print(str(similarity_calculator.edit_distance(edit_pair[0], edit_pair[1])))
 
