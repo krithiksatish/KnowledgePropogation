@@ -26,6 +26,7 @@ requires:
 """
 
 import argparse
+import os
 import time
 from bs4 import BeautifulSoup
 import pandas as pd
@@ -134,9 +135,18 @@ async def extract_by_article(url):
             except:
                 journal = 'NO_JOURNAL'
             try:
-                date = soup.find('time', {'class': 'citation-year'}).text
+                #date = soup.find('time', {'class': 'citation-year'}).text
+                date_text = soup.find('span', class_='cit').text
+                parts = date_text.split(';') if ';' in date_text else date_text.split(':')
+                date = parts[0]
+                print(date)
             except:
                 date = 'NO_DATE'
+
+            try:
+                raw_text = extract_raw_article_text(soup)
+            except:
+                raw_text = 'NO_TEXT'
 
             # Format data as a dict to insert into a DataFrame
             article_data = {
@@ -147,10 +157,33 @@ async def extract_by_article(url):
                 'affiliations': affiliations,
                 'journal': journal,
                 'keywords': keywords,
-                'date': date
+                'date': date,
+                'raw_text': raw_text
             }
             # Add dict containing one article's data to list of article dicts
             articles_data.append(article_data)
+
+# NOTE: Method currently returns a link to the article text, not the raw text yet
+def extract_raw_article_text(soup):
+    '''
+    Extracts raw text from a single pubmed article
+    :param soup: BeautifulSoup object representing the parsed HTML of the PubMed page
+    :return raw_article_text
+    '''
+    div_full_text_links_list = soup.find('div', class_='full-text-links-list')
+
+    # NOTE: some pubmed articles have several full text links, currently method only grabs the first one
+    if div_full_text_links_list:
+        # All url links to articles are within an <a> element
+        a_element = div_full_text_links_list.find('a')
+        if a_element:
+            # Extract the href attribute
+            link_href = a_element.get('href')
+            print("Link Href:", link_href)
+    else:
+        print("Div with class 'full-text-links-list' not found.")
+
+    return link_href
 
 async def get_pmids(page, keyword):
     """
@@ -247,7 +280,12 @@ if __name__ == "__main__":
     root_pubmed_url = 'https://pubmed.ncbi.nlm.nih.gov'
     # Construct our list of keywords from a user input file to search for and extract articles from
     search_keywords = []
-    with open('keywords.txt') as file:
+
+    # Get the directory of the current script
+    current_directory = os.path.dirname(os.path.realpath(__file__))
+    path_to_keywords = os.path.join(current_directory, 'keywords.txt')
+    
+    with open(path_to_keywords) as file:
         keywords = file.readlines()
         [search_keywords.append(keyword.strip()) for keyword in keywords]
     print(f'\nFinding PubMed article URLs for {len(keywords)} keywords found in keywords.txt\n')
@@ -273,7 +311,7 @@ if __name__ == "__main__":
     loop.run_until_complete(get_article_data(urls))
 
     # Create DataFrame to store data from all articles
-    articles_df = pd.DataFrame(articles_data, columns=['title','abstract','affiliations','authors','journal','date','keywords','url'])
+    articles_df = pd.DataFrame(articles_data, columns=['title','abstract','affiliations','authors','journal','date','keywords','url','raw_text'])
     print('Preview of scraped article data:\n')
     print(articles_df.head(5))
     # Save all extracted article data to CSV for further processing
