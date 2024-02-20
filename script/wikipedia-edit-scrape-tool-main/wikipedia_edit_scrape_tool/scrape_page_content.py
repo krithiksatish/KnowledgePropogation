@@ -14,6 +14,8 @@ from .wiki_regexes import cut_list, cut_sup, cut_note, cut_table, cut_first_tabl
           double_paren, emphasis, bold, second_heading, third_heading, fourth_heading, second_heading_separation, fourth_heading2, third_heading2, all_spaces, \
             punctuations, link, link_number, paren, paren_fr, paren_zh2
 
+from typing import List, Tuple  # for get_prev_after_text
+
 re_category_list = re.compile(r'<link rel="mw:PageProp\/Category" href=".\/(Category:.*?)"')
 
 text_maker = HTML2Text()
@@ -406,8 +408,6 @@ def get_diff_text(diff_page_url: str, lang_wiki: str) -> List[str]:
     
     # TODO: 
     #   We should consider abbreviation edge cases during sentence extraction
-    #   Sometimes duplicate sentences are added to the set, eg. "Sentence A", "Sentence B", 
-    #       then "Sentence A. Sentence B" together. Need to fix this.
 
     sentence_set = []
     refs_set = set()
@@ -607,3 +607,69 @@ def get_diff_text(diff_page_url: str, lang_wiki: str) -> List[str]:
             sentence_set.append(sentences_to_add.lstrip())
     
     return sentence_set, refs_set
+
+# returns a tuple containing a list of before and after sentence pairs, given the url of a wiki-diff page
+def get_before_after_text(diff_page_url: str, lang_wiki: str) -> List[Tuple[str, str]]:
+    
+    # do try/except 3 times.
+    for _ in range(3):
+        try:
+            html = requests.get(diff_page_url, timeout=10).text
+            break
+        except requests.exceptions.Timeout:
+            print("timeout error")
+            continue
+
+    soup = bs4.BeautifulSoup(html, 'html.parser')
+    tr_blocks = soup.find_all('tr')
+    prev_after_list = []
+
+    # loop through tr blocks
+    for tr_block in tr_blocks:
+        # if tr block has a td element child with class "diff-marker"
+        # and without a data-marker attribute, this means it's simply
+        # shifted text. skip this block
+        if tr_block.find('td', class_='diff-marker') and not tr_block.find('td', class_='diff-marker').get('data-marker'):
+            continue
+        
+        # get the td elements within the tr block with class "diff-deletedline" or "diff-addedline"
+        deletion_block = tr_block.find('td', class_='diff-deletedline')
+        addition_block = tr_block.find('td', class_='diff-addedline')
+        addition_text = ""
+        deletion_text = ""
+
+        # add aggregated text from both before and after text to tuple
+        if deletion_block:
+            deletion_text, del_refs = get_aggregated_text(deletion_block)
+        if addition_block:
+            addition_text, del_refs = get_aggregated_text(addition_block)
+
+        # if theres no deletion or addition text, skip this block
+        if not deletion_text and not addition_text:
+            continue
+
+        before_after_pair = (deletion_text, addition_text)
+        prev_after_list.append(before_after_pair)
+
+    return prev_after_list
+
+# takes in an addition or deletion block of html and returns both the aggregated text and a set of references
+def get_aggregated_text(block: bs4.element.Tag) -> Tuple[str, set]:
+    total_block_text = ""
+    refs_set = set()
+    
+    for child in block.children:
+        total_block_text += child.text
+
+    # remove refs from text and add to set
+    ref_regex = r'(<ref.*?>.*?</ref>|\*\s*\{\{cite.*?\}\})'
+    
+    while True:
+        match = re.search(ref_regex, total_block_text, flags=re.DOTALL)
+        if not match:
+            break
+        start, end = match.span()
+        refs_set.add(total_block_text[start:end])
+        total_block_text = total_block_text[:start] + total_block_text[end:]
+    
+    return total_block_text, refs_set
