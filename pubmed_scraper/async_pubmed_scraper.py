@@ -29,6 +29,7 @@ import argparse
 import os
 import time
 from bs4 import BeautifulSoup
+import bs4
 import pandas as pd
 import random
 import requests
@@ -37,6 +38,10 @@ import aiohttp
 import socket
 import warnings; warnings.filterwarnings('ignore') # aiohttp produces deprecation warnings that don't concern us
 #import nest_asyncio; nest_asyncio.apply() # necessary to run nested async loops in jupyter notebooks
+
+from urllib.parse import urlparse
+
+sites_hosting_pubmed_article_count = {}
 
 # Use a variety of agents for our ClientSession to reduce traffic per agent
 # This (attempts to) avoid a ban for high traffic from any single agent
@@ -172,18 +177,55 @@ def extract_raw_article_text(soup):
     '''
     div_full_text_links_list = soup.find('div', class_='full-text-links-list')
 
-    # NOTE: some pubmed articles have several full text links, currently method only grabs the first one
+    # List to store all href attributes
+    href_list = []
+
+    # NOTE: some PubMed articles have several full text links, currently the method only grabs the first one
     if div_full_text_links_list:
-        # All url links to articles are within an <a> element
-        a_element = div_full_text_links_list.find('a')
-        if a_element:
-            # Extract the href attribute
-            link_href = a_element.get('href')
-            print("Link Href:", link_href)
+        # All URL links to articles are within an <a> element
+        a_elements = div_full_text_links_list.find_all('a')
+
+        # Some pages haev multiple full-text links (i.e. https://pubmed.ncbi.nlm.nih.gov/38114130/)
+        for a_element in a_elements:
+            # Extract the href attribute and append to the list
+            href = a_element.get('href')
+            href_list.append(href)
+
+            # REMOVE: temporarily counting the number of articles a site hosts
+            full_domain = get_domain(href)
+            sites_hosting_pubmed_article_count[full_domain] = sites_hosting_pubmed_article_count.setdefault(full_domain, 0) + 1
+
+            return 'it works'
+            #return extract_raw_article_text_helper(link_href)
     else:
         print("Div with class 'full-text-links-list' not found.")
+        return 'NO TEXT'
 
-    return link_href
+def extract_raw_article_text_helper(url):
+    response = requests.get(url)
+    assert response.status_code == 200
+    soup = bs4.BeautifulSoup(response.content, 'html.parser')
+
+def get_domain(url):
+    '''
+    Extracts the domain name from a given URL
+    :param url: str: The URL to extract the domain name from
+    :return domain: str: The domain name of the URL
+    '''
+    parsed_url = urlparse(url)
+    domain = parsed_url.netloc
+
+    if domain == 'doi.org' or domain == 'dx.doi.org':
+        # Access the URL to see what site is hosting
+        try:
+            response = requests.head(url, allow_redirects=True)
+            hosting_domain = urlparse(response.url).netloc
+            return hosting_domain
+        except Exception as e:
+            print(f"Error accessing URL: {e}")
+            return None
+    else:
+        return domain
 
 async def get_pmids(page, keyword):
     """
@@ -281,10 +323,10 @@ if __name__ == "__main__":
     # Construct our list of keywords from a user input file to search for and extract articles from
     search_keywords = []
 
-    # Get the directory of the current script
+    # Get full path to keywords.txt
     current_directory = os.path.dirname(os.path.realpath(__file__))
     path_to_keywords = os.path.join(current_directory, 'keywords.txt')
-    
+
     with open(path_to_keywords) as file:
         keywords = file.readlines()
         [search_keywords.append(keyword.strip()) for keyword in keywords]
@@ -319,3 +361,9 @@ if __name__ == "__main__":
     articles_df.to_csv(filename)
     print(f'It took {time.time() - start} seconds to find {len(urls)} articles; {len(scraped_urls)} unique articles were saved to {filename}')
 
+    # REMOVE BELOW
+    print()
+    sorted_site_ranks = sorted(sites_hosting_pubmed_article_count.items(), key=lambda x: x[1], reverse=True)
+    print(f"total articles: {len(sorted_site_ranks)}")
+    for key, value in sorted_site_ranks:
+        print(f"{key}: {value}")
