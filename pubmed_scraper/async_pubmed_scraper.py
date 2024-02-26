@@ -26,6 +26,7 @@ requires:
 """
 
 import argparse
+from collections import OrderedDict
 import os
 import time
 from bs4 import BeautifulSoup
@@ -171,40 +172,81 @@ async def extract_by_article(url):
 # NOTE: Method currently returns a link to the article text, not the raw text yet
 def extract_raw_article_text(soup):
     '''
-    Extracts raw text from a single pubmed article
+    Extracts raw text from a single pubmed article if it's hosted on PMC, elsevier, or springer.
     :param soup: BeautifulSoup object representing the parsed HTML of the PubMed page
     :return raw_article_text
     '''
     div_full_text_links_list = soup.find('div', class_='full-text-links-list')
 
-    # List to store all href attributes
-    href_list = []
+    # Dict to store all href attributes, containing (domain, url)
+    href_dict = {}
 
-    # NOTE: some PubMed articles have several full text links, currently the method only grabs the first one
     if div_full_text_links_list:
         # All URL links to articles are within an <a> element
         a_elements = div_full_text_links_list.find_all('a')
 
         # Some pages haev multiple full-text links (i.e. https://pubmed.ncbi.nlm.nih.gov/38114130/)
         for a_element in a_elements:
-            # Extract the href attribute and append to the list
+            # Extract the href attribute
             href = a_element.get('href')
-            href_list.append(href)
 
             # REMOVE: temporarily counting the number of articles a site hosts
             full_domain = get_domain(href)
             sites_hosting_pubmed_article_count[full_domain] = sites_hosting_pubmed_article_count.setdefault(full_domain, 0) + 1
 
-            return 'it works'
-            #return extract_raw_article_text_helper(link_href)
+            href_dict[full_domain] = href
+
+        return extract_raw_article_text_helper(href_dict)
     else:
         print("Div with class 'full-text-links-list' not found.")
         return 'NO TEXT'
 
-def extract_raw_article_text_helper(url):
+def extract_raw_article_text_helper(href_dict):
+    if 'www.ncbi.nlm.nih.gov' in href_dict.keys(): #PMC
+        return 'PMC'
+        #return extract_full_text_PMC(href_dict['www.ncbi.nlm.nih.gov'])
+    elif 'linkinghub.elsevier.com' in href_dict.keys(): 
+        return 'elsevier'
+        #return extract_full_text_elsevier(href_dict['www.ncbi.nlm.nih.gov'])
+    elif 'link.springer.com' in href_dict.keys():
+        return 'springer'
+        #return extract_full_text_springer(href_dict['www.ncbi.nlm.nih.gov'])
+    
+    return 'NO TEXT (not hosted on top 3 sites)'
+
+def extract_full_text_PMC(url):
+    raise NotImplementedError
+    
+def extract_full_text_elsevier(url):
+    raise NotImplementedError
+
+    # response = requests.get(url)
+    # assert response.status_code == 200
+    # soup = bs4.BeautifulSoup(response.content, 'html.parser')
+
+    # temp = soup.find('article', class_='col-lg-12 col-md-16 pad-left pad-right u-padding-s-top')
+    # return temp.text
+
+def extract_full_text_springer(url):
     response = requests.get(url)
     assert response.status_code == 200
     soup = bs4.BeautifulSoup(response.content, 'html.parser')
+
+    sections = soup.find('div', class_='main-content').findAll('div', class_='c-article-section__content')
+    
+    full_raw_text = ''
+
+    for section in sections:
+        paragraphs = section.find_all('p')
+    
+        # Filter out <p> elements that do not have any attributes or classes
+        filtered_paragraphs = [p for p in paragraphs if not p.attrs]
+
+        # Iterate over each paragraph within the section
+        for paragraph in filtered_paragraphs:
+            full_raw_text += paragraph.text + '\n'
+
+    return full_raw_text
 
 def get_domain(url):
     '''
@@ -226,6 +268,32 @@ def get_domain(url):
             return None
     else:
         return domain
+
+# TODO: make methods all asynchrnous (asyncronous version of get_domain doesn't work)
+# async def get_domain(url):
+#     '''
+#     Extracts the domain name from a given URL
+#     :param url: str: The URL to extract the domain name from
+#     :return domain: str: The domain name of the URL
+#     '''
+#     parsed_url = urlparse(url)
+#     domain = parsed_url.netloc
+
+#     if domain == 'doi.org' or domain == 'dx.doi.org':
+#         return await get_domain_doi(url)
+#     else:
+#         return domain
+    
+# async def get_domain_doi(url):
+#     # Access the URL to see what site is hosting
+#     try:
+#         async with aiohttp.ClientSession() as session:
+#             async with session.head(url, allow_redirects=True) as response:
+#                     hosting_domain = urlparse(response.url).netloc
+#                     return hosting_domain
+#     except Exception as e:
+#         print(f"Error accessing URL: {e}")
+#     return None
 
 async def get_pmids(page, keyword):
     """
@@ -361,9 +429,13 @@ if __name__ == "__main__":
     articles_df.to_csv(filename)
     print(f'It took {time.time() - start} seconds to find {len(urls)} articles; {len(scraped_urls)} unique articles were saved to {filename}')
 
+
     # REMOVE BELOW
     print()
     sorted_site_ranks = sorted(sites_hosting_pubmed_article_count.items(), key=lambda x: x[1], reverse=True)
-    print(f"total articles: {len(sorted_site_ranks)}")
+    #print(f"total articles: {len(sorted_site_ranks)}")
+    total_articles = 0
     for key, value in sorted_site_ranks:
         print(f"{key}: {value}")
+        total_articles += value
+    print(f"total articles: {total_articles}")
