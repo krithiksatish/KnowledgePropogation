@@ -15,6 +15,9 @@ from .wiki_regexes import cut_list, cut_sup, cut_note, cut_table, cut_first_tabl
             punctuations, link, link_number, paren, paren_fr, paren_zh2
 
 from typing import List, Tuple  # for get_prev_after_text
+import difflib  # for find_text_difference_and_context
+import nltk
+nltk.download('punkt')
 
 re_category_list = re.compile(r'<link rel="mw:PageProp\/Category" href=".\/(Category:.*?)"')
 
@@ -608,8 +611,9 @@ def get_diff_text(diff_page_url: str, lang_wiki: str) -> List[str]:
     
     return sentence_set, refs_set
 
-# returns a tuple containing a list of before and after sentence pairs, given the url of a wiki-diff page
-def get_before_after_text(diff_page_url: str, lang_wiki: str) -> List[Tuple[str, str]]:
+# TODO: account for case where text additions and deletions are on moved blocks (see DL wiki-diff page)
+# returns a tuple containing a list of sentence pairs, with each pair containing a text block  given the url of a wiki-diff page
+def get_del_add_text(diff_page_url: str, lang_wiki: str) -> List[Tuple[str, str]]:
     
     # do try/except 3 times.
     for _ in range(3):
@@ -622,7 +626,7 @@ def get_before_after_text(diff_page_url: str, lang_wiki: str) -> List[Tuple[str,
 
     soup = bs4.BeautifulSoup(html, 'html.parser')
     tr_blocks = soup.find_all('tr')
-    prev_after_list = []
+    context_pairs_list = []
 
     # loop through tr blocks
     for tr_block in tr_blocks:
@@ -642,16 +646,17 @@ def get_before_after_text(diff_page_url: str, lang_wiki: str) -> List[Tuple[str,
         if deletion_block:
             deletion_text, del_refs = get_aggregated_text(deletion_block)
         if addition_block:
-            addition_text, del_refs = get_aggregated_text(addition_block)
+            addition_text, add_refs = get_aggregated_text(addition_block)
 
         # if theres no deletion or addition text, skip this block
         if not deletion_text and not addition_text:
             continue
 
-        before_after_pair = (deletion_text, addition_text)
-        prev_after_list.append(before_after_pair)
+        # find differences and their contexts for each pair of deletion and addition texts
+        context_pairs = find_differences_and_context(addition_text, deletion_text)
+        context_pairs_list.extend(context_pairs)
 
-    return prev_after_list
+    return context_pairs_list
 
 # takes in an addition or deletion block of html and returns both the aggregated text and a set of references
 def get_aggregated_text(block: bs4.element.Tag) -> Tuple[str, set]:
@@ -671,5 +676,70 @@ def get_aggregated_text(block: bs4.element.Tag) -> Tuple[str, set]:
         start, end = match.span()
         refs_set.add(total_block_text[start:end])
         total_block_text = total_block_text[:start] + total_block_text[end:]
+
+    # if first character of block is | or =, return None, None
+    if total_block_text and total_block_text[0] in ['|', '=']:
+        return None, None
     
     return total_block_text, refs_set
+
+# takes in the text block containing changes, the original text block, and the 
+# start and end indices of the changes, and returns just the portion of the text 
+# block that contains the changes and its corresponding portion of the original text block
+# need import difflib
+def find_differences_and_context(changed_text, og_text, context_sentences=1):
+    if changed_text is None:
+        changed_text = ''
+    
+    if og_text is None:
+        og_text = ''
+
+    # Tokenize the texts into sentences
+    changed_sentences = sent_tokenize(changed_text)
+    og_sentences = sent_tokenize(og_text)
+
+    # Use difflib to find the differences
+    diff = list(difflib.ndiff(og_sentences, changed_sentences))
+
+    # Prepare a list to store the context of changes
+    changes_with_context = []
+
+    # Iterate through the diff output to find indices of changes
+    for i, s in enumerate(diff):
+        if s.startswith('- ') or s.startswith('+ '):  # Change found
+            # Determine context range
+            start_context = max(0, i - context_sentences)
+            end_context = min(len(diff), i + context_sentences + 1)
+
+            # Extract the context range
+            context = diff[start_context:end_context]
+
+            # Append the context of this change to the list
+            changes_with_context.append(context)
+
+    # Now we will merge contexts if they are close to each other
+    merged_contexts = []
+    if changes_with_context:  # Check if the list is not empty
+        current_merge = changes_with_context[0]
+
+        for context in changes_with_context[1:]:
+            # If the next context starts within the current merge's range, merge them
+            if diff.index(context[0]) <= diff.index(current_merge[-1]):
+                current_merge.extend(context)
+                current_merge = list(dict.fromkeys(current_merge))  # Remove duplicates while preserving order
+            else:
+                merged_contexts.append(current_merge)
+                current_merge = context
+
+        # Don't forget to add the last merge
+        if current_merge not in merged_contexts:
+            merged_contexts.append(current_merge)
+
+    # Convert the diff markers back to normal text and differentiate between original and changed contexts
+    cleaned_contexts = []
+    for context in merged_contexts:
+        og_context = ' '.join([s[2:] for s in context if s.startswith('- ')])
+        ch_context = ' '.join([s[2:] for s in context if s.startswith('+ ')])
+        cleaned_contexts.append((og_context, ch_context))  # Create a tuple
+
+    return cleaned_contexts
