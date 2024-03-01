@@ -42,6 +42,12 @@ import warnings; warnings.filterwarnings('ignore') # aiohttp produces deprecatio
 
 from urllib.parse import urlparse
 
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+
+from lxml import html
+
 sites_hosting_pubmed_article_count = {}
 
 # Use a variety of agents for our ClientSession to reduce traffic per agent
@@ -202,15 +208,30 @@ def extract_raw_article_text(soup):
         return 'NO TEXT'
 
 def extract_raw_article_text_helper(href_dict):
+    # Temporarily just returns the site name, will replace with returning full-text of article
     if 'www.ncbi.nlm.nih.gov' in href_dict.keys(): #PMC
         return 'PMC'
-        #return extract_full_text_PMC(href_dict['www.ncbi.nlm.nih.gov'])
+        return extract_full_text_PMC(href_dict['www.ncbi.nlm.nih.gov'])
     elif 'linkinghub.elsevier.com' in href_dict.keys(): 
         return 'elsevier'
         #return extract_full_text_elsevier(href_dict['www.ncbi.nlm.nih.gov'])
     elif 'link.springer.com' in href_dict.keys():
         return 'springer'
         #return extract_full_text_springer(href_dict['www.ncbi.nlm.nih.gov'])
+    elif 'journals.sagepub.com' in href_dict.keys():
+        return 'sagepub'
+    elif 'onlinelibrary.wiley.com' in href_dict.keys():
+        return 'wiley'
+    elif 'www.tandfonline.com' in href_dict.keys():
+        return 'tandfonline'
+    elif 'jamanetwork.com' in href_dict.keys():
+        return 'jamanetwork'
+    elif 'www.nature.com' in href_dict.keys():
+        return 'nature'
+    elif 'journals.lww.com' in href_dict.keys():
+        return 'journals.lww'
+    elif 'www.mdpi.com' in href_dict.keys():
+        return 'mdpi'
     
     return 'NO TEXT (not hosted on top 3 sites)'
 
@@ -218,14 +239,45 @@ def extract_full_text_PMC(url):
     raise NotImplementedError
     
 def extract_full_text_elsevier(url):
-    raise NotImplementedError
+    # raise NotImplementedError
 
-    # response = requests.get(url)
-    # assert response.status_code == 200
-    # soup = bs4.BeautifulSoup(response.content, 'html.parser')
 
-    # temp = soup.find('article', class_='col-lg-12 col-md-16 pad-left pad-right u-padding-s-top')
+
+
+    #TODO: pass this stuff in the method so it doesn't install everytime lol
+    service = Service(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service)
+
+    driver.get(url)
+
+    # Wait for a few seconds for the page to load
+    time.sleep(5)
+
+    # Get the page source after JavaScript execution
+    page_source = driver.page_source
+
+    # Close the browser
+    driver.quit()
+
+    print(page_source)
+
+    # Parse the content with BeautifulSoup
+    # soup = BeautifulSoup(page_source, 'html.parser')
+    # direct_url = soup.find('link', rel='canonical').get('href')
+    # extract_full_text_elsevier_directurl(direct_url)
+    
+    
+    # soup.find('article', class_='col-lg-12 col-md-16 pad-left pad-right u-padding-s-top')
     # return temp.text
+
+def extract_full_text_elsevier_directurl(url):
+    response = requests.get(url, allow_redirects=True)
+    # assert response.status_code == 200
+
+    print(response.text)
+    soup = bs4.BeautifulSoup(response.content, 'html.parser')
+    temp = soup.find('article', class_='col-lg-12 col-md-16 pad-left pad-right u-padding-s-top')
+    return temp
 
 def extract_full_text_springer(url):
     response = requests.get(url)
