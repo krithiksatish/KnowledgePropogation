@@ -1,5 +1,5 @@
 import wikipedia_edit_scrape_tool
-from wikipedia_edit_scrape_tool.scrape_page_content import get_diff_text, get_before_after_text
+from wikipedia_edit_scrape_tool.scrape_page_content import get_diff_text, get_del_add_text
 from wikipedia_edit_scrape_tool.scrape_edit_history import get_diff_between_two_revisions
 from wikipedia_edit_scrape_tool.sentence_simlarity import SentenceSimilarityCalculator
 
@@ -20,7 +20,7 @@ for diff_url in diff_url_test_set:
     print("========================")
     print("----------DIFF----------")
     print("========================")
-    before_after_list = get_before_after_text(diff_url, "enwiki")
+    before_after_list = get_del_add_text(diff_url, "enwiki")
     for before, after in before_after_list:
         print("----------BEFORE----------")
         print(before)
@@ -29,11 +29,12 @@ for diff_url in diff_url_test_set:
 
         sim = SentenceSimilarityCalculator()
         similarity_score = sim.cosine_similarity(before, after)
+        edit_distance_score = sim.edit_distance(before, after)
 
         print("----------SIMILARITY----------")
         print(similarity_score)
-        print("----------SIGNIFICANT EDIT----------")
-        print(sim.is_signifcant_edit(before, after))
+        print("----------EDIT DISTANCE----------")
+        print(sim.edit_distance(before, after))
         print("========================")
         print ("\n")
 
