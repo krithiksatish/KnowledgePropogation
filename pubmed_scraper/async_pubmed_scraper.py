@@ -25,6 +25,8 @@ requires:
     nest_asyncio (OPTIONAL: Solves nested async calls in jupyter notebooks)
 """
 
+# HOW TO RUN: 'python3 async_pubmed_scraper.py --pages 15  --start 2020 --stop 2024'
+
 import argparse
 from collections import OrderedDict
 import os
@@ -232,134 +234,6 @@ def extract_raw_article_text_helper(href_dict):
         return 'journals.lww'
     
     return 'NO TEXT (not hosted on top 3 sites)'
-
-def extract_full_text_PMC(url):
-    raise NotImplementedError
-    
-def extract_full_text_elsevier(url):
-    raise NotImplementedError #403 error
-
-    #TODO: pass this stuff in the method so it doesn't install everytime lol
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service)
-
-    driver.get(url)
-
-    # Wait for a few seconds for the page to load
-    time.sleep(5)
-
-    # Get the page source after JavaScript execution
-    page_source = driver.page_source
-
-    # Close the browser
-    driver.quit()
-
-    print(page_source)
-
-    # Parse the content with BeautifulSoup
-    # soup = BeautifulSoup(page_source, 'html.parser')
-    # direct_url = soup.find('link', rel='canonical').get('href')
-    # extract_full_text_elsevier_directurl(direct_url)
-    
-    # soup.find('article', class_='col-lg-12 col-md-16 pad-left pad-right u-padding-s-top')
-    # return temp.text
-
-def extract_full_text_elsevier_directurl(url):
-    response = requests.get(url, allow_redirects=True)
-    # assert response.status_code == 200
-
-    print(response.text)
-    soup = bs4.BeautifulSoup(response.content, 'html.parser')
-    temp = soup.find('article', class_='col-lg-12 col-md-16 pad-left pad-right u-padding-s-top')
-    return temp
-
-def extract_full_text_springer(url):
-    response = requests.get(url)
-    assert response.status_code == 200
-    soup = bs4.BeautifulSoup(response.content, 'html.parser')
-
-    full_raw_text = ''
-
-    sections = soup.find('div', class_='main-content').findAll('div', class_='c-article-section__content')
-
-    for section in sections:
-        paragraphs = section.find_all('p')
-    
-        # Filter out <p> elements that do not have any attributes or classes
-        filtered_paragraphs = [p for p in paragraphs if not p.attrs]
-
-        # Iterate over each paragraph within the section
-        for paragraph in filtered_paragraphs:
-            full_raw_text += paragraph.text + '\n'
-
-    return full_raw_text
-
-def extract_full_text_wiley(url):
-    raise NotImplementedError #403 error
-    headers = make_header()
-    #headers = {"Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.1 (KHTML, like Gecko) Chrome/22.0.1207.1 Safari/537.1"}
-    response = requests.get(url, headers=headers)
-    assert response.status_code == 200
-    soup = bs4.BeautifulSoup(response.content, 'html.parser')
-
-    full_raw_text = ''
-
-    sections = soup.find('div', class_="article-section article-section__full").findAll('div', class_="article-section__content")
-
-    for section in sections:
-        # Grab title of section first
-        # Find the <h2> tag with specific attributes
-        h2_tag = section.find('h2', class_='article-section__title section__title section1')
-
-        # Extract the title from the <h2> tag
-        if h2_tag:
-            section_title = h2_tag.text  # Use strip() to remove leading/trailing whitespace
-            full_raw_text += section_title
-
-        paragraphs = section.find_all('p')
-
-        for para in paragraphs:
-            full_raw_text += para.get_text(separator=' ', strip=False) + '\n'
-
-    return full_raw_text
-
-def extract_full_text_jama(url):
-    headers = make_header()
-    response = requests.get(url, headers=headers)
-    assert response.status_code == 200
-    soup = bs4.BeautifulSoup(response.content, 'html.parser')
-
-    full_raw_text = ''
-
-    paragraphs = soup.find('div', class_='article-full-text').findAll('p', class_='para')
-    for paragraph in paragraphs:
-        full_raw_text += paragraph.text + '\n'
-
-    return full_raw_text
-
-def extract_full_text_journalslww(url):
-    headers = make_header()
-    response = requests.get(url, headers=headers)
-    assert response.status_code == 200
-    soup = bs4.BeautifulSoup(response.content, 'html.parser')
-
-    article_body = soup.find('article', id='ej-article-view').find('section', id='ArticleBody')
-
-    # Extract all text under the article tag
-    text_contents = [text for text in article_body.strings if text.strip()]
-
-    # Join the text contents into a single string
-    full_raw_text = ' '.join(text_contents)
-
-    return full_raw_text
-
-def extract_full_text_mdpi(url):
-    headers = make_header()
-    response = requests.get(url, headers=headers)
-    assert response.status_code == 200
-    soup = bs4.BeautifulSoup(response.content, 'html.parser')
-
-    # TODO: finish implementing mdpi scraper
 
 def get_domain(url):
     '''
