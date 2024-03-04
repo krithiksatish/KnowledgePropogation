@@ -18,6 +18,29 @@ from individual_sites_scraper import *
 # print(extract_full_text_mdpi('https://www.mdpi.com/resolver?pii=ijerph17249338'))
 # print(extract_full_text_mdpi('https://www.mdpi.com/resolver?pii=ijerph17249332'))
 
+# # TAYLOR AND FRANCIS TESTS - works!
+# URL1 = 'https://www.tandfonline.com/doi/full/10.1080/01612840.2023.2244338'
+# URL2 = 'https://www.tandfonline.com/doi/full/10.1080/09603123.2019.1612041'
+# URL3 = 'https://www.tandfonline.com/doi/full/10.1080/01612840.2023.2237381'
+# URL4 = 'https://www.tandfonline.com/doi/full/10.1080/09638237.2020.1755027'
+# texts = extract_full_text_tandfonline(URL1)
+# for text in texts:
+#     print(text)
+# print('======================================')
+# texts = extract_full_text_tandfonline(URL2)
+# for text in texts:
+#     print(text)
+# print('======================================')
+# texts = extract_full_text_tandfonline(URL3)
+# for text in texts:
+#     print(text)
+# print('======================================')
+# texts = extract_full_text_tandfonline(URL4)
+# for text in texts:
+#     print(text)
+# print('======================================')
+
+
 # THESE DON"T WORK
 
 # WILEY TESTS - doesn't work
@@ -30,33 +53,3 @@ from individual_sites_scraper import *
 # print(extract_full_text_elsevier('https://www.sciencedirect.com/science/article/pii/S2215036622000360'))
 # print(extract_full_text_elsevier('https://linkinghub.elsevier.com/retrieve/pii/S2352-250X(21)00024-5'))
 # print(res4)
-
-# # TAYLOR AND FRANCIS TESTS - doesn't work
-URL1 = 'https://www.tandfonline.com/doi/full/10.1080/01612840.2023.2244338'
-URL2 = 'https://www.tandfonline.com/doi/full/10.1080/09603123.2019.1612041'
-URL3 = 'https://www.tandfonline.com/doi/full/10.1080/01612840.2023.2237381'
-URL4 = 'https://www.tandfonline.com/doi/full/10.1080/09638237.2020.1755027'
-
-texts = extract_full_text_tandfonline(URL1)
-for text in texts:
-    print(text)
-
-print('======================================')
-
-texts = extract_full_text_tandfonline(URL2)
-for text in texts:
-    print(text)
-
-print('======================================')
-
-texts = extract_full_text_tandfonline(URL3)
-for text in texts:
-    print(text)
-
-print('======================================')
-
-texts = extract_full_text_tandfonline(URL4)
-for text in texts:
-    print(text)
-
-print('======================================')
