@@ -162,7 +162,7 @@ async def extract_by_article(url):
                 date = 'NO_DATE'
 
             try:
-                raw_text = extract_raw_article_text(soup)
+                raw_text = extract_article_hosting_sites(soup)
             except:
                 raw_text = 'NO_TEXT'
 
@@ -182,7 +182,7 @@ async def extract_by_article(url):
             articles_data.append(article_data)
 
 # NOTE: Method currently returns a link to the article text, not the raw text yet
-def extract_raw_article_text(soup):
+def extract_article_hosting_sites(soup):
     '''
     Extracts raw text from a single pubmed article if it's hosted on PMC, elsevier, or springer.
     :param soup: BeautifulSoup object representing the parsed HTML of the PubMed page
@@ -202,89 +202,19 @@ def extract_raw_article_text(soup):
             # Extract the href attribute
             href = a_element.get('href')
 
-            # REMOVE: temporarily counting the number of articles a site hosts
-            full_domain = get_domain(href)
+            domain = urlparse(href).netloc
+
+            full_domain = 'doi domain' if domain in ('doi.org', 'dx.doi.org') else domain
+
             sites_hosting_pubmed_article_count[full_domain] = sites_hosting_pubmed_article_count.setdefault(full_domain, 0) + 1
 
             href_dict[full_domain] = href
 
-        return extract_raw_article_text_helper(href_dict)
+        return href_dict
+        #return extract_raw_article_text_helper(href_dict)
     else:
         print("Div with class 'full-text-links-list' not found.")
-        return 'NO TEXT'
-
-def extract_raw_article_text_helper(href_dict):
-    # Temporarily just returns the site name, will replace with returning full-text of article
-    if 'www.mdpi.com' in href_dict.keys(): # currently implementing
-        return 'mdpi'
-    elif 'www.ncbi.nlm.nih.gov' in href_dict.keys(): #PMC
-        return 'PMC'
-        return extract_full_text_PMC(href_dict['www.ncbi.nlm.nih.gov'])
-    elif 'linkinghub.elsevier.com' in href_dict.keys(): #403 Error
-        return 'elsevier'
-    elif 'link.springer.com' in href_dict.keys(): #Implemented
-        return 'springer'
-    elif 'journals.sagepub.com' in href_dict.keys():
-        return 'sagepub'
-    elif 'onlinelibrary.wiley.com' in href_dict.keys(): #403 Error
-        return 'wiley'
-    elif 'www.tandfonline.com' in href_dict.keys():
-        return 'tandfonline'
-    elif 'jamanetwork.com' in href_dict.keys(): #Implemented
-        return 'jamanetwork'
-    elif 'www.nature.com' in href_dict.keys(): #Implemented (not pushed yet)
-        return 'nature'
-    elif 'journals.lww.com' in href_dict.keys(): #Implemented
-        return 'journals.lww'
-    
-    return 'NO TEXT (not hosted on top 3 sites)'
-
-def get_domain(url):
-    '''
-    Extracts the domain name from a given URL
-    :param url: str: The URL to extract the domain name from
-    :return domain: str: The domain name of the URL
-    '''
-    parsed_url = urlparse(url)
-    domain = parsed_url.netloc
-
-    if domain == 'doi.org' or domain == 'dx.doi.org':
-        # Access the URL to see what site is hosting
-        try:
-            response = requests.head(url, allow_redirects=True)
-            hosting_domain = urlparse(response.url).netloc
-            return hosting_domain
-        except Exception as e:
-            print(f"Error accessing URL: {e}")
-            return None
-    else:
-        return domain
-
-# TODO: make methods all asynchrnous (asyncronous version of get_domain doesn't work)
-# async def get_domain(url):
-#     '''
-#     Extracts the domain name from a given URL
-#     :param url: str: The URL to extract the domain name from
-#     :return domain: str: The domain name of the URL
-#     '''
-#     parsed_url = urlparse(url)
-#     domain = parsed_url.netloc
-
-#     if domain == 'doi.org' or domain == 'dx.doi.org':
-#         return await get_domain_doi(url)
-#     else:
-#         return domain
-    
-# async def get_domain_doi(url):
-#     # Access the URL to see what site is hosting
-#     try:
-#         async with aiohttp.ClientSession() as session:
-#             async with session.head(url, allow_redirects=True) as response:
-#                     hosting_domain = urlparse(response.url).netloc
-#                     return hosting_domain
-#     except Exception as e:
-#         print(f"Error accessing URL: {e}")
-#     return None
+        return {}
 
 async def get_pmids(page, keyword):
     """
