@@ -25,11 +25,13 @@ requires:
     nest_asyncio (OPTIONAL: Solves nested async calls in jupyter notebooks)
 """
 
+# HOW TO RUN: 'python3 async_pubmed_scraper.py --pages 15  --start 2020 --stop 2024'
+
 import argparse
 from collections import OrderedDict
 import os
 import time
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, NavigableString
 import bs4
 import pandas as pd
 import random
@@ -213,116 +215,50 @@ def extract_raw_article_text(soup):
 
 def extract_raw_article_text_helper(href_dict):
     # Temporarily just returns the site name, will replace with returning full-text of article
-    if 'www.ncbi.nlm.nih.gov' in href_dict.keys(): #PMC
+    if 'www.mdpi.com' in href_dict.keys(): # currently implementing
+        return 'mdpi'
+    elif 'www.ncbi.nlm.nih.gov' in href_dict.keys(): #PMC
         return 'PMC'
         return extract_full_text_PMC(href_dict['www.ncbi.nlm.nih.gov'])
-    elif 'linkinghub.elsevier.com' in href_dict.keys(): 
+    elif 'linkinghub.elsevier.com' in href_dict.keys(): #403 Error
         return 'elsevier'
-        #return extract_full_text_elsevier(href_dict['www.ncbi.nlm.nih.gov'])
-    elif 'link.springer.com' in href_dict.keys():
+    elif 'link.springer.com' in href_dict.keys(): #Implemented
         return 'springer'
-        #return extract_full_text_springer(href_dict['www.ncbi.nlm.nih.gov'])
     elif 'journals.sagepub.com' in href_dict.keys():
         return 'sagepub'
-    elif 'onlinelibrary.wiley.com' in href_dict.keys():
+    elif 'onlinelibrary.wiley.com' in href_dict.keys(): #403 Error
         return 'wiley'
     elif 'www.tandfonline.com' in href_dict.keys():
         return 'tandfonline'
-    elif 'jamanetwork.com' in href_dict.keys():
+    elif 'jamanetwork.com' in href_dict.keys(): #Implemented
         return 'jamanetwork'
-    elif 'www.nature.com' in href_dict.keys():
+    elif 'www.nature.com' in href_dict.keys(): #Implemented (not pushed yet)
         return 'nature'
-    elif 'journals.lww.com' in href_dict.keys():
+    elif 'journals.lww.com' in href_dict.keys(): #Implemented
         return 'journals.lww'
-    elif 'www.mdpi.com' in href_dict.keys():
-        return 'mdpi'
     
     return 'NO TEXT (not hosted on top 3 sites)'
 
-def extract_full_text_PMC(url):
-    raise NotImplementedError
-    
-def extract_full_text_elsevier(url):
-    # raise NotImplementedError
+def get_domain(url):
+    '''
+    Extracts the domain name from a given URL
+    :param url: str: The URL to extract the domain name from
+    :return domain: str: The domain name of the URL
+    '''
+    parsed_url = urlparse(url)
+    domain = parsed_url.netloc
 
-
-
-
-    #TODO: pass this stuff in the method so it doesn't install everytime lol
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service)
-
-    driver.get(url)
-
-    # Wait for a few seconds for the page to load
-    time.sleep(5)
-
-    # Get the page source after JavaScript execution
-    page_source = driver.page_source
-
-    # Close the browser
-    driver.quit()
-
-    print(page_source)
-
-    # Parse the content with BeautifulSoup
-    # soup = BeautifulSoup(page_source, 'html.parser')
-    # direct_url = soup.find('link', rel='canonical').get('href')
-    # extract_full_text_elsevier_directurl(direct_url)
-    
-    
-    # soup.find('article', class_='col-lg-12 col-md-16 pad-left pad-right u-padding-s-top')
-    # return temp.text
-
-def extract_full_text_elsevier_directurl(url):
-    response = requests.get(url, allow_redirects=True)
-    # assert response.status_code == 200
-
-    print(response.text)
-    soup = bs4.BeautifulSoup(response.content, 'html.parser')
-    temp = soup.find('article', class_='col-lg-12 col-md-16 pad-left pad-right u-padding-s-top')
-    return temp
-
-def extract_full_text_springer(url):
-    response = requests.get(url)
-    assert response.status_code == 200
-    soup = bs4.BeautifulSoup(response.content, 'html.parser')
-
-    sections = soup.find('div', class_='main-content').findAll('div', class_='c-article-section__content')
-    
-    full_raw_text = ''
-
-    for section in sections:
-        paragraphs = section.find_all('p')
-    
-        # Filter out <p> elements that do not have any attributes or classes
-        filtered_paragraphs = [p for p in paragraphs if not p.attrs]
-
-        # Iterate over each paragraph within the section
-        for paragraph in filtered_paragraphs:
-            full_raw_text += paragraph.text + '\n'
-
-    return full_raw_text
-
-def extract_full_text_tandfonline(URL):
-    # Set up the Selenium WebDriver with Options
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")  # Ensures the browser runs in headless mode
-    chrome_service = Service(ChromeDriverManager().install())
-    driver = Driver(uc=True)
-
-    # Navigate to the page
-    driver.get(URL)
-
-    # Wait for the page to load and JavaScript to execute
-    time.sleep(5)  # You can adjust the wait time as needed
-
-    # Print the full HTML content
-    full_html_content = driver.page_source
-    print(full_html_content)
-
-    # Clean up: close the browser
-    driver.quit()
+    if domain == 'doi.org' or domain == 'dx.doi.org':
+        # Access the URL to see what site is hosting
+        try:
+            response = requests.head(url, allow_redirects=True)
+            hosting_domain = urlparse(response.url).netloc
+            return hosting_domain
+        except Exception as e:
+            print(f"Error accessing URL: {e}")
+            return None
+    else:
+        return domain
 
 # TODO: make methods all asynchrnous (asyncronous version of get_domain doesn't work)
 # async def get_domain(url):
