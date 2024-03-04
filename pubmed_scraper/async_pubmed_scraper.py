@@ -44,7 +44,11 @@ from urllib.parse import urlparse
 
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.chrome.options import Options
+from seleniumbase import Driver
 from webdriver_manager.chrome import ChromeDriverManager
+import time
 
 from lxml import html
 
@@ -300,26 +304,25 @@ def extract_full_text_springer(url):
 
     return full_raw_text
 
-def get_domain(url):
-    '''
-    Extracts the domain name from a given URL
-    :param url: str: The URL to extract the domain name from
-    :return domain: str: The domain name of the URL
-    '''
-    parsed_url = urlparse(url)
-    domain = parsed_url.netloc
+def extract_full_text_tandfonline(URL):
+    # Set up the Selenium WebDriver with Options
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")  # Ensures the browser runs in headless mode
+    chrome_service = Service(ChromeDriverManager().install())
+    driver = Driver(uc=True)
 
-    if domain == 'doi.org' or domain == 'dx.doi.org':
-        # Access the URL to see what site is hosting
-        try:
-            response = requests.head(url, allow_redirects=True)
-            hosting_domain = urlparse(response.url).netloc
-            return hosting_domain
-        except Exception as e:
-            print(f"Error accessing URL: {e}")
-            return None
-    else:
-        return domain
+    # Navigate to the page
+    driver.get(URL)
+
+    # Wait for the page to load and JavaScript to execute
+    time.sleep(5)  # You can adjust the wait time as needed
+
+    # Print the full HTML content
+    full_html_content = driver.page_source
+    print(full_html_content)
+
+    # Clean up: close the browser
+    driver.quit()
 
 # TODO: make methods all asynchrnous (asyncronous version of get_domain doesn't work)
 # async def get_domain(url):
