@@ -9,7 +9,7 @@ import dateparser
 import loguru
 import requests
 
-from .scrape_page_content import get_info, get_diff_text
+from .scrape_page_content import get_info
 from .constants import TARGET_LANGUAGES
 
 logger = loguru.logger
@@ -344,10 +344,3 @@ def get_diff_page_link(wiki_id: str, newer_rev_id: str, older_rev_id: str) -> st
     lang_wiki = "enwiki"
     diff_link = f"https://{_get_base_url_for_language(lang_wiki)}/w/index.php?title={wiki_id}&diff={newer_rev_id}&oldid={older_rev_id}"
     return diff_link
-
-# Example call: get_diff_between_two_revisions(TimCook, )
-def get_diff_between_two_revisions(wiki_id: str, newer_rev_id: str, older_rev_id: str) -> Dict[str, str]:
-
-    diff_url = get_diff_page_link(wiki_id, newer_rev_id, older_rev_id)
-    # ex. diff_url = https://en.wikipedia.org/w/index.php?title=Tim_Cook&diff=1194639363&oldid=1189697434
-    return get_diff_text(diff_url, 'enwiki')

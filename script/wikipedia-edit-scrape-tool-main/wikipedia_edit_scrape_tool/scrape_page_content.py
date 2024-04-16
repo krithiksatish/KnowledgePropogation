@@ -1,3 +1,4 @@
+from datetime import datetime
 import ipdb
 from urllib.parse import urlparse, parse_qs
 import bs4
@@ -393,227 +394,8 @@ def get_info(wiki_link: str, lang_wiki: str):
     return wiki_link, person_info
 
 
-def get_diff_text(diff_page_url: str, lang_wiki: str) -> List[str]:
-    # Goal of function: given a url of the diff page, return a set of strings (ideally sentences)
-    # that contains all the yellow highlights (the added sentences)
-
-    #### step 1: requesting the html
-    # get the html through a request.
-
-    # do try/except 3 times.
-    for _ in range(3):
-        try:
-            html = requests.get(diff_page_url, timeout=10).text
-            break
-        except requests.exceptions.Timeout:
-            print("timeout error")
-            continue
-    
-    # TODO: 
-    #   We should consider abbreviation edge cases during sentence extraction
-
-    sentence_set = []
-    refs_set = set()
-    soup = bs4.BeautifulSoup(html, 'html.parser')
-    text_addition_blocks = soup.find_all('td', class_='diff-addedline diff-side-added')
-
-    # Loop through each block
-    for addition_block in text_addition_blocks:
-        total_block_text = ""
-        edits_range_list = []
-
-        # Grab div within it (each addition_block should only have one div)
-        addition_div = addition_block.find('div')
-
-        if addition_div:
-            # if addition div only has one child of type string , this means the entire 
-            # div is added text, so add entire range to list
-            if (len(addition_div.contents) == 1 and
-                isinstance(addition_div.contents[0], bs4.element.NavigableString)):
-
-                ins_text = addition_div.text
-                ins_range = {'start': 0, 'end': len(ins_text)}
-                edits_range_list.append(ins_range)
-                total_block_text += ins_text
-            
-            # else, addition div has multiple children, iterate through them and find the 
-            # exact ranges of added text
-            else:
-                for child in addition_div.children:                
-                    # if the child is a string, add it to the total_block_text
-                    if isinstance(child, bs4.element.NavigableString):
-                        total_block_text += child
-                    
-                    # if the child is an ins element with classes diffchange and diffchange-inline, 
-                    # get text and add range to list
-                    elif (child.name == 'ins' and 'diffchange' in child.get('class', []) 
-                                            and 'diffchange-inline' in child.get('class', [])):
-                        ins_text = child.text
-                        
-                        # if text is space or punctuation only, skip
-                        punctuation_regex = re.compile(r"^[?!,.\":;—]+$")
-                        if not ins_text.strip() or punctuation_regex.match(ins_text.strip()):
-                            total_block_text += ins_text
-                            continue
-
-                        # store range in dict - start index (inclusive), end index (exclusive)
-                        ins_range = {'start': len(total_block_text), 'end': len(total_block_text) + len(ins_text)}
-                        edits_range_list.append(ins_range)
-                        total_block_text += ins_text
-
-        # first check: if edits_range_list is empty, skip this block and go to next block
-        if (not edits_range_list):
-            continue
-
-        # secondary check: if there is a deletion block sibling (should be a previous sibling), compare
-        # full text of both blocks convert to lowercase and remove punctuation and spaces for comparison 
-        # - if they are the same, skip this block
-        deletion_block = addition_block.find_previous_sibling('td', class_='diff-deletedline diff-side-deleted')
-        deletion_block_text = ""
-        deletion_block_text_no_deletions = ""
-        if deletion_block:
-            # get div within deletion block
-            deletion_div = deletion_block.find('div')
-    
-            if deletion_div:
-                for child in deletion_div.children:
-                    if isinstance(child, bs4.element.NavigableString):
-                        deletion_block_text += child
-                        deletion_block_text_no_deletions += child
-                    elif (child.name == 'del' and 'diffchange' in child.get('class', []) 
-                                            and 'diffchange-inline' in child.get('class', [])):
-                        del_text = child.text
-                        deletion_block_text += del_text
-                
-            # strip all spaces, punctuation, and convert to lowercase for both texts
-            add_text_stripped = re.sub(r'[?!,.\":;—\s]+', '', total_block_text).lower()
-            del_text_stripped = re.sub(r'[?!,.\":;—\s]+', '', deletion_block_text).lower()
-            del_text_no_deletions_stripped = re.sub(r'[?!,.\":;—\s]+', '', deletion_block_text_no_deletions).lower()
-
-            # if texts are the same without spaces and punctuation, or without deletions, skip this block
-            if (add_text_stripped == del_text_stripped or add_text_stripped == del_text_no_deletions_stripped):
-                continue
-
-        while True:
-            # match <ref...>...</ref> and * {{cite...}}
-            ref_regex = r'(<ref.*?>.*?</ref>|\*\s*\{\{cite.*?\}\})'
-            match = re.search(ref_regex, total_block_text, flags=re.DOTALL)
-            
-            # break if no more matches
-            if not match:
-                break
-            
-            # get start and end indices of ref tag
-            start, end = match.span()
-            removal_length = end - start
-            
-            # update edit ranges
-            for i in range(len(edits_range_list)):
-                # vars for start and end of edit range (for readability)
-                edit_range = edits_range_list[i]
-                edit_start, edit_end = edit_range['start'], edit_range['end']
-
-                # case 1: if ref tag removed completely before edit range
-                if end <= edit_start:
-                    edits_range_list[i] = ({'start': edit_start - removal_length, 
-                                            'end': edit_end - removal_length})
-                
-                # case 2: if ref tag overlaps only the beginning of edit range
-                elif start < edit_start < end < edit_end:
-                    edits_range_list[i] = ({'start': start, 
-                                            'end': edit_end - removal_length})
-                     # add ref tag to set of updated refs
-                    refs_set.add(total_block_text[start:end])
-                
-                # case 3: if ref tag overlaps only the end of edit range
-                elif end > edit_end > start > edit_start:
-                    edits_range_list[i] = ({'start': edit_start, 'end': start})
-                    # add ref tag to set of updated refs
-                    refs_set.add(total_block_text[start:end])
-                
-                # case 4: if ref tag encompasses the entire edit range
-                elif start <= edit_start and edit_end <= end:
-                    edits_range_list[i] = None
-                    # add ref tag to set of updated refs
-                    refs_set.add(total_block_text[start:end])
-                
-                # case 5: if ref tag is within the edit range
-                elif start >= edit_start and edit_end >= end:
-                    edits_range_list[i] = ({'start': edit_start, 'end': start})
-                    # add ref tag to set of updated refs
-                    refs_set.add(total_block_text[start:end])
-            
-            # remove the ref tag from the text
-            total_block_text = total_block_text[:start] + total_block_text[end:]
-            
-            # remove None values from edits_range_list
-            edits_range_list = [rg for rg in edits_range_list if rg is not None]
-
-        # check again if edits_range_list is empty, skip this block and go to next block
-        if (not edits_range_list):
-            continue
-
-        # split text into sentences (preserve space before sentence start if not first sentence)
-        # sentence_ranges = [(m.start(0), m.end(0)) for m in re.finditer(r'\S.*?[.!?]', total_block_text)]
-        sentence_ranges = [(m.start(0) if m.start(0) == 0 else m.start(0) - 1, m.end(0)) 
-                           for m in re.finditer(r'\S.*?[.!?]', total_block_text)]
-        
-        # if end of last range is not end of text, add the rest of the text as a sentence
-        if sentence_ranges and sentence_ranges[-1][1] != len(total_block_text):
-            sentence_ranges.append((sentence_ranges[-1][1], len(total_block_text)))
-        
-        # if no sentence ranges, add entire text as a sentence
-        if not sentence_ranges:
-            sentence_ranges.append((0, len(total_block_text)))
-
-        # make a list to keep track of which sentences contain the edit ranges
-        sentence_indices_state = [False] * len(sentence_ranges)
-
-        for edit_range in edits_range_list:
-            e_start, e_end = edit_range['start'], edit_range['end']
-            
-            # init vars for edit sentences range
-            start_sentence_idx, end_sentence_idx = None, None
-           
-            # iterate thru sentence ranges to find the sentence range that the edit range is in
-            for i, sentence_range in enumerate(sentence_ranges):
-                s_start, s_end = sentence_range[0], sentence_range[1]
-                
-                # if start index is in current sentence range, set edit_sent_start to s_start
-                if (s_start <= e_start < s_end):
-                    start_sentence_idx = i
-                
-                # if end index is in current sentence range, set edit_sent_end to s_end
-                if (s_start < e_end <= s_end):
-                    end_sentence_idx = i
-                    break
-
-            # if both start and end sentence indices are found, set the state of the sentences
-            # to True (and the sentences between to them)
-            if (start_sentence_idx is not None and end_sentence_idx is not None):
-                for i in range(start_sentence_idx, end_sentence_idx+1):
-                    sentence_indices_state[i] = True
-
-        # add the sentences that contain the edit ranges to the set (append sentences next to each other)
-        sentences_to_add = ""
-        for i, sentence_range in enumerate(sentence_ranges):
-            if sentence_indices_state[i]:
-                sentences_to_add += total_block_text[sentence_range[0]:sentence_range[1]]
-            else:
-                if sentences_to_add:
-                    # strip potential spaces at front of text and add sentence to set
-                    sentence_set.append(sentences_to_add.lstrip())
-                    sentences_to_add = ""
-        
-        # if there are sentences left in sentences_to_add, add them to the set
-        if sentences_to_add:
-            sentence_set.append(sentences_to_add.lstrip())
-    
-    return sentence_set, refs_set
-
-# TODO: account for case where text additions and deletions are on moved blocks (see DL wiki-diff page)
 # returns a tuple containing a list of sentence pairs, with each pair containing a text block  given the url of a wiki-diff page
-def get_del_add_text(diff_page_url: str, lang_wiki: str) -> List[Tuple[str, str]]:
+def get_del_add_text(diff_page_url: str) -> List[Tuple[str, str]]:
     
     # do try/except 3 times.
     for _ in range(3):
@@ -630,15 +412,35 @@ def get_del_add_text(diff_page_url: str, lang_wiki: str) -> List[Tuple[str, str]
 
     # loop through tr blocks
     for tr_block in tr_blocks:
+        moved_edits = False
+        # Check for the moved paragraph left anchor (case where paragraph was edited but moved)
+        move_left_anchor = tr_block.find('a', class_='mw-diff-movedpara-left')
+        if move_left_anchor:
+            # Find the parent 'td' element of the move_left_anchor which has class "diff-marker"
+            diff_marker_td = move_left_anchor.find_parent('td', class_='diff-marker')
+            # Now use find_next_sibling to find the 'td' with class "diff-deletedline diff-side-deleted"
+            deletion_block = diff_marker_td.find_next_sibling('td', class_='diff-deletedline diff-side-deleted')
+
+            move_right_name = move_left_anchor['href'].lstrip('#')
+            move_right_anchor = soup.find('a', {'name': move_right_name})
+            if move_right_anchor:
+                # Find the parent 'td' element with class "diff-addedline diff-side-added"
+                addition_block = move_right_anchor.find_parent('td', class_='diff-addedline diff-side-added')
+                moved_edits = True
+
         # if tr block has a td element child with class "diff-marker"
-        # and without a data-marker attribute, this means it's simply
-        # shifted text. skip this block
-        if tr_block.find('td', class_='diff-marker') and not tr_block.find('td', class_='diff-marker').get('data-marker'):
+        # and without a data-marker attribute, and no moved edits, this means 
+        # it's simply shifted text. skip this block
+        if (tr_block.find('td', class_='diff-marker') 
+                and not tr_block.find('td', class_='diff-marker').get('data-marker') 
+                and not moved_edits):
             continue
         
         # get the td elements within the tr block with class "diff-deletedline" or "diff-addedline"
-        deletion_block = tr_block.find('td', class_='diff-deletedline')
-        addition_block = tr_block.find('td', class_='diff-addedline')
+        if not moved_edits:
+            deletion_block = tr_block.find('td', class_='diff-deletedline')
+            addition_block = tr_block.find('td', class_='diff-addedline')
+        
         addition_text = ""
         deletion_text = ""
 
@@ -648,7 +450,7 @@ def get_del_add_text(diff_page_url: str, lang_wiki: str) -> List[Tuple[str, str]
         if addition_block:
             addition_text, add_refs = get_aggregated_text(addition_block)
 
-        # if theres no deletion or addition text, skip this block
+        # if theres no deletion text and no addition text, skip this block
         if not deletion_text and not addition_text:
             continue
 
@@ -667,7 +469,7 @@ def get_aggregated_text(block: bs4.element.Tag) -> Tuple[str, set]:
         total_block_text += child.text
 
     # remove refs from text and add to set
-    ref_regex = r'(<ref.*?>.*?</ref>|\*\s*\{\{cite.*?\}\})'
+    ref_regex = r'(<ref.*?>.*?</ref>|<ref.*?/>|\*\s*\{\{cite.*?\}\})'
     
     while True:
         match = re.search(ref_regex, total_block_text, flags=re.DOTALL)
@@ -678,7 +480,7 @@ def get_aggregated_text(block: bs4.element.Tag) -> Tuple[str, set]:
         total_block_text = total_block_text[:start] + total_block_text[end:]
 
     # if first character of block is | or =, return None, None
-    if total_block_text and total_block_text[0] in ['|', '=']:
+    if total_block_text and (total_block_text[0] in ['|', '='] or total_block_text.startswith('[[Category:') or total_block_text.startswith('{{')):
         return None, None
     
     return total_block_text, refs_set
@@ -687,7 +489,7 @@ def get_aggregated_text(block: bs4.element.Tag) -> Tuple[str, set]:
 # start and end indices of the changes, and returns just the portion of the text 
 # block that contains the changes and its corresponding portion of the original text block
 # need import difflib
-def find_differences_and_context(changed_text, og_text, context_sentences=1):
+def find_differences_and_context(changed_text, og_text, context_sentences=1) -> List[Tuple[str, str]]:
     if changed_text is None:
         changed_text = ''
     
@@ -743,3 +545,151 @@ def find_differences_and_context(changed_text, og_text, context_sentences=1):
         cleaned_contexts.append((og_context, ch_context))  # Create a tuple
 
     return cleaned_contexts
+
+# takes in a wikipedia page title and returns a list of urls to the page's revisions at pseudo-monthly intervals
+# usage: get_monthly_revision_comparison_links("Attention_deficit_hyperactivity_disorder")
+def get_monthly_revision_comparison_links(page_title: str) -> List[str]:
+    # Start a requests session for HTTP requests
+    S = requests.Session()
+    # Wikipedia API endpoint
+    URL = "https://en.wikipedia.org/w/api.php"
+
+    # Parameters for the initial API request to get revisions
+    PARAMS = {
+        "action": "query",                   # Action is 'query' to retrieve data.
+        "prop": "revisions",                 # We want to get revisions of the page.
+        "titles": page_title,                # Page title to get revisions for.
+        "rvlimit": "max",                    # Request as many revisions as allowed.
+        "rvdir": "newer",                    # Order revisions from oldest to newest.
+        "rvprop": "ids|timestamp",           # Get the revision IDs and timestamps.
+        "formatversion": "2",                # Use the modern format for the response.
+        "format": "json"                     # Response in JSON format.
+    }
+
+    # Initialize list to store the comparison URLs
+    comparison_urls = []
+    # Dictionary to store the first revision ID of each month
+    monthly_revisions = {}
+    # Flag to indicate if we are done fetching revisions
+    done = False
+
+    while not done:
+        # Make the API request
+        response = S.get(url=URL, params=PARAMS)
+        data = response.json()
+
+        # Parse the revisions from the API response
+        revisions = data['query']['pages'][0]['revisions']
+        for rev in revisions:
+            rev_id = rev['revid']  # Revision ID
+            timestamp = rev['timestamp']  # Timestamp of the revision
+            # Convert timestamp to datetime object
+            date = datetime.fromisoformat(timestamp.rstrip('Z'))
+            # Create a key for the month
+            month_key = f"{date.year}-{date.month:02d}"
+            # Store the first revision ID encountered for each month
+            if month_key not in monthly_revisions:
+                monthly_revisions[month_key] = rev_id
+
+        # Check if there's more data to fetch
+        if 'continue' in data:
+            # Set the rvcontinue parameter to the continuation value from the response
+            PARAMS['rvcontinue'] = data['continue']['rvcontinue']
+        else:
+            # No more revisions to fetch, so we're done
+            done = True
+
+    # The previous revision ID, used to generate comparison URLs
+    prev_rev_id = None
+    # Generate comparison URLs for the stored monthly revisions
+    for month_key in sorted(monthly_revisions.keys()):
+        rev_id = monthly_revisions[month_key]
+        if prev_rev_id:
+            # Create the comparison URL using the current and previous revision IDs
+            comparison_url = f"https://en.wikipedia.org/w/index.php?title={page_title.replace(' ', '_')}&diff={rev_id}&oldid={prev_rev_id}"
+            comparison_urls.append(comparison_url)
+        # Update the previous revision ID for the next loop iteration
+        prev_rev_id = rev_id
+
+    # Return the list of comparison URLs
+    return comparison_urls
+
+# takes in wikipedia catagory name and returns list of all article titles extracted from the page
+# usage: get_article_titles_from_category("Mental_health")
+def get_article_titles_from_category(category_name) -> List[str]:
+    S = requests.Session()
+    URL = "https://en.wikipedia.org/w/api.php"
+
+    # Parameters for the API request
+    PARAMS = {
+        "action": "query",
+        "list": "categorymembers",
+        "cmtitle": f"Category:{category_name}",
+        "cmlimit": "max",
+        "format": "json"
+    }
+
+    # List to store article titles
+    article_titles = []
+
+    # Flag to indicate if more data needs to be fetched
+    done = False
+
+    while not done:
+        response = S.get(url=URL, params=PARAMS)
+        data = response.json()
+
+        # Extract article titles from the response
+        for member in data['query']['categorymembers']:
+            if member['ns'] == 0:  # ns == 0 indicates an article page
+                article_titles.append(member['title'])
+
+        # Check if there's more data to fetch
+        if 'continue' in data:
+            PARAMS['cmcontinue'] = data['continue']['cmcontinue']
+        else:
+            done = True
+
+    return article_titles
+
+# get necessary page ids from footer of a wiki page (eg. related wiki articles to mental health)
+def get_link_ids_from_footer(wiki_link: str):
+    for _ in range(3):
+        try:
+            html = requests.get(wiki_link, timeout=10).text
+            break
+        except requests.exceptions.Timeout:
+            print("Timeout error on attempt", _ + 1)
+            continue
+    else:  # If we never broke out of the loop, return an empty list
+        print("Failed to retrieve content after 3 attempts")
+        return []
+
+    # Parse the HTML content with BeautifulSoup
+    soup = bs4.BeautifulSoup(html, 'html.parser')
+
+    # Find all the td elements with the specific classes
+    td_elements = soup.find_all('td', class_=['navbox-list-with-group', 'navbox-list'])
+
+    # Open a file named 'test.txt' in write mode
+    with open('wiki_page_ids.txt', 'w') as file:
+        # Find all the td elements with the specific classes
+        td_elements = soup.find_all('td', class_=['navbox-list-with-group', 'navbox-list'])
+
+        # Loop through each td element
+        for td in td_elements:
+            # Find all ul elements within the td element
+            ul_elements = td.find_all('ul')
+            for ul in ul_elements:
+                # For each ul element, find all a elements and get their href attributes if they exist
+                for a in ul.find_all('a'):
+                    href = a.get('href')  # Use the .get() method to avoid KeyError
+
+                    # Make sure the href attribute is not None and starts with '/wiki/' and does not contain a colon
+                    # This is to filter out non-article links and links to other language versions of the page
+                    # eg. /wiki/Template_talk:Mental_disorders
+                    if href and href.startswith('/wiki/') and ':' not in href:
+                        # Write each link to the file, followed by a newline
+                        # Strip the leading '/wiki/' from the href before writing
+                        file.write(href[6:] + '\n')
+    
