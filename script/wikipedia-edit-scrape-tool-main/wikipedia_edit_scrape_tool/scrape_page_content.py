@@ -393,9 +393,9 @@ def get_info(wiki_link: str, lang_wiki: str):
     person_info["section-text"] = section_text
     return wiki_link, person_info
 
-
-# returns a tuple containing a list of sentence pairs, with each pair containing a text block  given the url of a wiki-diff page
-def get_del_add_text(diff_page_url: str) -> List[Tuple[str, str]]:
+# given the url of a wiki-diff page, returns a tuple containing a list of sentence pairs 
+# with each pair containing a text block, and boolean indicating whether the text contains real content
+def get_del_add_text(diff_page_url: str) -> List[Tuple[str, str, str, str, bool]]:
     
     # do try/except 3 times.
     for _ in range(3):
@@ -443,10 +443,11 @@ def get_del_add_text(diff_page_url: str) -> List[Tuple[str, str]]:
         
         addition_text = ""
         deletion_text = ""
+        add_refs = set()
 
         # add aggregated text from both before and after text to tuple
         if deletion_block:
-            deletion_text, del_refs = get_aggregated_text(deletion_block)
+            deletion_text, _ = get_aggregated_text(deletion_block) # we don't care about deleted references
         if addition_block:
             addition_text, add_refs = get_aggregated_text(addition_block)
 
@@ -455,22 +456,26 @@ def get_del_add_text(diff_page_url: str) -> List[Tuple[str, str]]:
             continue
 
         # find differences and their contexts for each pair of deletion and addition texts
-        context_pairs = find_differences_and_context(addition_text, deletion_text)
+        context_pairs = find_differences_and_context(addition_text, deletion_text, add_refs)
         context_pairs_list.extend(context_pairs)
 
     return context_pairs_list
 
 # takes in an addition or deletion block of html and returns both the aggregated text and a set of references
+# returns tuple: [0] aggregated text, [1] set of references, [2] whether the block contained real text content
 def get_aggregated_text(block: bs4.element.Tag) -> Tuple[str, set]:
     total_block_text = ""
     refs_set = set()
-    
+
+    # Aggregating all text content from the block's children
     for child in block.children:
         total_block_text += child.text
 
-    # remove refs from text and add to set
-    ref_regex = r'(<ref.*?>.*?</ref>|<ref.*?/>|\*\s*\{\{cite.*?\}\})'
-    
+    # Regex patterns to find references and URLs (including optional square brackets)
+    ref_regex = r'(<ref.*?>.*?</ref>|<ref.*?/>|\*\s*\{\{cite.*?\}\}|{{Citation.*?}}</ref>)'
+    url_regex = r'\[?(https?://\S+)\]?'
+
+    # Extract references
     while True:
         match = re.search(ref_regex, total_block_text, flags=re.DOTALL)
         if not match:
@@ -479,76 +484,183 @@ def get_aggregated_text(block: bs4.element.Tag) -> Tuple[str, set]:
         refs_set.add(total_block_text[start:end])
         total_block_text = total_block_text[:start] + total_block_text[end:]
 
-    # if first character of block is | or =, return None, None
-    if total_block_text and (total_block_text[0] in ['|', '='] or total_block_text.startswith('[[Category:') or total_block_text.startswith('{{')):
-        return None, None
-    
+    # Extract URLs, handling optional square brackets
+    while True:
+        url_match = re.search(url_regex, total_block_text)
+        if not url_match:
+            break
+        url_start, url_end = url_match.span()
+        url_text = url_match.group(1)  # Group 1 is the actual URL without square brackets
+        refs_set.add(url_text)
+        total_block_text = total_block_text[:url_start] + total_block_text[url_end:]
+
     return total_block_text, refs_set
 
 # takes in the text block containing changes, the original text block, and the 
 # start and end indices of the changes, and returns just the portion of the text 
 # block that contains the changes and its corresponding portion of the original text block
 # need import difflib
-def find_differences_and_context(changed_text, og_text, context_sentences=1) -> List[Tuple[str, str]]:
-    if changed_text is None:
+# takes in the text block containing changes, the original text block, and the 
+# start and end indices of the changes, and returns just the portion of the text 
+# block that contains the changes and its corresponding portion of the original text block
+# need import difflib
+def find_differences_and_context(changed_text, og_text, references, context_sentences=1) -> List[Tuple[str, str, str, str, set, bool]]:
+    if not changed_text:
         changed_text = ''
-    
-    if og_text is None:
+    if not og_text:
         og_text = ''
 
-    # Tokenize the texts into sentences
     changed_sentences = sent_tokenize(changed_text)
     og_sentences = sent_tokenize(og_text)
-
-    # Use difflib to find the differences
     diff = list(difflib.ndiff(og_sentences, changed_sentences))
-
-    # Prepare a list to store the context of changes
     changes_with_context = []
 
-    # Iterate through the diff output to find indices of changes
+    # Identifying changes and their context
     for i, s in enumerate(diff):
-        if s.startswith('- ') or s.startswith('+ '):  # Change found
-            # Determine context range
+        if s.startswith('- ') or s.startswith('+ '):
             start_context = max(0, i - context_sentences)
-            end_context = min(len(diff), i + context_sentences + 1)
-
-            # Extract the context range
+            end_context = min(len(diff), i + 1)
             context = diff[start_context:end_context]
-
-            # Append the context of this change to the list
             changes_with_context.append(context)
 
-    # Now we will merge contexts if they are close to each other
+    # Merging close contexts and processing them
     merged_contexts = []
-    if changes_with_context:  # Check if the list is not empty
+    if changes_with_context:
         current_merge = changes_with_context[0]
-
         for context in changes_with_context[1:]:
-            # If the next context starts within the current merge's range, merge them
             if diff.index(context[0]) <= diff.index(current_merge[-1]):
                 current_merge.extend(context)
-                current_merge = list(dict.fromkeys(current_merge))  # Remove duplicates while preserving order
+                current_merge = list(dict.fromkeys(current_merge))
             else:
                 merged_contexts.append(current_merge)
                 current_merge = context
+        merged_contexts.append(current_merge)  # Add the last context
 
-        # Don't forget to add the last merge
-        if current_merge not in merged_contexts:
-            merged_contexts.append(current_merge)
-
-    # Convert the diff markers back to normal text and differentiate between original and changed contexts
     cleaned_contexts = []
     for context in merged_contexts:
         og_context = ' '.join([s[2:] for s in context if s.startswith('- ')])
         ch_context = ' '.join([s[2:] for s in context if s.startswith('+ ')])
-        cleaned_contexts.append((og_context, ch_context))  # Create a tuple
-
+        
+        # Split contexts into smaller segments if needed
+        if len(og_context) > 250 or len(ch_context) > 250:
+            smaller_contexts = split_into_smaller_contexts(og_context, ch_context)
+            for small_og, small_ch in smaller_contexts:
+                process_and_append_context(small_og, small_ch, references, cleaned_contexts)
+        else:
+            process_and_append_context(og_context, ch_context, references, cleaned_contexts)
+    
     return cleaned_contexts
 
-# takes in a wikipedia page title and returns a list of urls to the page's revisions at pseudo-monthly intervals
+def process_and_append_context(og_context, ch_context, references, cleaned_contexts) -> None:
+    contains_content = filter_non_content_edits(og_context, ch_context)
+    cleaned_og_context = clean_wiki_text(og_context) if contains_content else ""
+    cleaned_ch_context = clean_wiki_text(ch_context) if contains_content else ""
+    cleaned_contexts.append((og_context, ch_context, cleaned_og_context, cleaned_ch_context, references, contains_content))
+
+def split_into_smaller_contexts(og_context, ch_context, max_length=250) -> List[Tuple[str, str]]:
+    og_sentences = sent_tokenize(og_context)
+    ch_sentences = sent_tokenize(ch_context)
+    smaller_contexts = []
+    
+    current_og, current_ch = "", ""
+    current_length = 0
+    
+    for og_sent, ch_sent in zip(og_sentences, ch_sentences):
+        # Check the length with the new sentence added
+        if current_length + len(og_sent) + len(ch_sent) <= max_length:
+            current_og += (og_sent + " ")
+            current_ch += (ch_sent + " ")
+            current_length += len(og_sent) + len(ch_sent)
+        else:
+            if current_og and current_ch:  # Ensure not to add empty strings
+                smaller_contexts.append((current_og.strip(), current_ch.strip()))
+            current_og, current_ch = og_sent + " ", ch_sent + " "
+            current_length = len(og_sent) + len(ch_sent)
+    
+    # Add the last segment if it has content
+    if current_og and current_ch:
+        smaller_contexts.append((current_og.strip(), current_ch.strip()))
+    
+    return smaller_contexts
+
+# takes in a text block and returns the cleaned text
+def clean_wiki_text(text: str) -> str:
+    text = text.strip()
+
+    # Remove wiki markup
+    text = re.sub(r"''+", "", text)  # Remove italics and bold
+
+    # Update the pattern to keep the text after the '|', if it exists, otherwise keep the text before the '|'
+    text = re.sub(r"\[\[([^|\]]+\|)?([^\]]+)\]\]", r"\2", text)  # Modify internal links
+
+    text = re.sub(r"\[([^\]]+)\]", r"\1", text)  # Remove single brackets
+
+    # Remove complex templates and any nested templates
+    # Continue removing nested templates until all are gone
+    old_text = None
+    while old_text != text:
+        old_text = text
+        text = re.sub(r"\{\{[^{}]*(?:\{\{[^{}]*\}\}[^{}]*)*\}\}", "", text)
+    
+    text = re.sub(r"<ref[^>]*>.*?</ref>", "", text)  # Remove references
+    text = re.sub(r"<[^>]+>", "", text)  # Remove other HTML tags
+    text = re.sub(r"\s+", " ", text)  # Normalize whitespace
+
+    # Strip leading asterisks, hashes, and whitespace globally, including any space right after the asterisk
+    text = re.sub(r'^\s*[\*#]+\s*', '', text, flags=re.MULTILINE)
+
+    # Remove any stray closing curly braces, "|}", and stray brackets in one go
+    text = re.sub(r"\}\}+|\|\}|[\[\]#]", "", text)
+
+    return text.strip()  # Strip trailing and leading whitespace globally
+
+# filter out non-content edits based on the context of the changes (eg. presence of certain characters
+# that aren't related to actual content changes)
+def filter_non_content_edits(old_text: str, new_text: str) -> bool:
+    contains_content = True
+    cutout_set = ('|', '{|', '=', '[[Category:', '[[File:', '{{', '#REDIRECT', '#redirect')
+
+    # Strip leading asterisks and other whitespace characters from the new text
+    strip_new_text = re.sub(r'^\s*\*+\s*', '', new_text.strip(), flags=re.MULTILINE)
+
+    # Patterns to check for non-content edits
+    non_content_patterns = [
+        r'^<math>.*</math>$',         # Entire content within <math> tags
+        r'^<[^>]+>$',                 # Entire content within any other single HTML tag
+    ]
+
+    # Check if the new text starts with any non-content leading characters or matches any of the specified patterns
+    if strip_new_text.startswith(cutout_set) or any(re.match(pattern, strip_new_text) for pattern in non_content_patterns):
+        contains_content = False
+
+    # Apply the same checks to the old text if the new text is empty
+    if not new_text:
+        strip_old_text = old_text.strip()
+        if strip_old_text.startswith(cutout_set) or any(re.match(pattern, strip_old_text) for pattern in non_content_patterns):
+            contains_content = False
+
+    return contains_content
+
+# takes in two texts and returns the differences between old and new text
+def get_text_differences(old_text, new_text) -> str:
+    # Tokenize the texts
+    old_words = old_text.split()
+    new_words = new_text.split()
+    
+    # Get the difference iterator
+    diff = difflib.ndiff(old_words, new_words)
+    
+    # Extract additions
+    added_words = [word[2:] for word in diff if word.startswith('+ ')]
+    
+    # Join words to form the resulting string
+    result = ' '.join(added_words)
+    return result
+
+# takes in a wikipedia page title and returns a list of urls to the page's revisions at 
+# pseudo-monthly intervals, as well as the metadata for each revision
 # usage: get_monthly_revision_comparison_links("Attention_deficit_hyperactivity_disorder")
-def get_monthly_revision_comparison_links(page_title: str) -> List[str]:
+def get_monthly_revision_comparison_links(page_title: str) -> List[Tuple[str, Dict]]:
     # Start a requests session for HTTP requests
     S = requests.Session()
     # Wikipedia API endpoint
@@ -556,18 +668,18 @@ def get_monthly_revision_comparison_links(page_title: str) -> List[str]:
 
     # Parameters for the initial API request to get revisions
     PARAMS = {
-        "action": "query",                   # Action is 'query' to retrieve data.
-        "prop": "revisions",                 # We want to get revisions of the page.
-        "titles": page_title,                # Page title to get revisions for.
-        "rvlimit": "max",                    # Request as many revisions as allowed.
-        "rvdir": "newer",                    # Order revisions from oldest to newest.
-        "rvprop": "ids|timestamp",           # Get the revision IDs and timestamps.
-        "formatversion": "2",                # Use the modern format for the response.
-        "format": "json"                     # Response in JSON format.
+        "action": "query",
+        "prop": "revisions",
+        "titles": page_title,
+        "rvlimit": "max",
+        "rvdir": "newer",
+        "rvprop": "ids|timestamp|user|userid",
+        "formatversion": "2",
+        "format": "json"
     }
 
-    # Initialize list to store the comparison URLs
-    comparison_urls = []
+    # Dictionary to store metadata for each revision by ID
+    revision_metadata = {}
     # Dictionary to store the first revision ID of each month
     monthly_revisions = {}
     # Flag to indicate if we are done fetching revisions
@@ -579,40 +691,45 @@ def get_monthly_revision_comparison_links(page_title: str) -> List[str]:
         data = response.json()
 
         # Parse the revisions from the API response
-        revisions = data['query']['pages'][0]['revisions']
+        revisions = data['query']['pages'][0].get('revisions', [])
         for rev in revisions:
-            rev_id = rev['revid']  # Revision ID
-            timestamp = rev['timestamp']  # Timestamp of the revision
-            # Convert timestamp to datetime object
+            rev_id = rev['revid']
+            timestamp = rev['timestamp']
+            user = rev['user']
+            userid = rev['userid']
             date = datetime.fromisoformat(timestamp.rstrip('Z'))
-            # Create a key for the month
             month_key = f"{date.year}-{date.month:02d}"
-            # Store the first revision ID encountered for each month
             if month_key not in monthly_revisions:
                 monthly_revisions[month_key] = rev_id
+            revision_metadata[rev_id] = {
+                "timestamp": timestamp,
+                "user": user,
+                "userid": userid
+            }
 
         # Check if there's more data to fetch
         if 'continue' in data:
-            # Set the rvcontinue parameter to the continuation value from the response
             PARAMS['rvcontinue'] = data['continue']['rvcontinue']
         else:
-            # No more revisions to fetch, so we're done
             done = True
 
-    # The previous revision ID, used to generate comparison URLs
-    prev_rev_id = None
     # Generate comparison URLs for the stored monthly revisions
+    prev_rev_id = None
+    result = []
     for month_key in sorted(monthly_revisions.keys()):
         rev_id = monthly_revisions[month_key]
         if prev_rev_id:
-            # Create the comparison URL using the current and previous revision IDs
             comparison_url = f"https://en.wikipedia.org/w/index.php?title={page_title.replace(' ', '_')}&diff={rev_id}&oldid={prev_rev_id}"
-            comparison_urls.append(comparison_url)
-        # Update the previous revision ID for the next loop iteration
+            metadata = revision_metadata.get(rev_id, {})
+            # Extract the editor and edit time from the metadata, and default to "Unknown" if not found
+            result.append((comparison_url, {
+                "editor": metadata.get('user', 'Unknown'),
+                "edit_time": metadata.get('timestamp', 'Unknown'),
+                "editor_id": metadata.get('userid', 'Unknown')
+            }))
         prev_rev_id = rev_id
 
-    # Return the list of comparison URLs
-    return comparison_urls
+    return result
 
 # takes in wikipedia catagory name and returns list of all article titles extracted from the page
 # usage: get_article_titles_from_category("Mental_health")

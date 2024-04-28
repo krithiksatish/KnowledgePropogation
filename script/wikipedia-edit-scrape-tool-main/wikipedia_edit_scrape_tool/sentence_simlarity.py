@@ -1,97 +1,123 @@
-from transformers import BertTokenizer, BertModel
+from transformers import BertTokenizer, BertModel, RobertaTokenizer, RobertaModel,\
+                            AutoTokenizer, AutoModelForSequenceClassification
 import torch
-from sentence_transformers import SentenceTransformer
+import spacy
 import difflib
+from nltk.tokenize import sent_tokenize
 
-# Example use: similarity_calculator.is_signifcant_edit("OpenAI is most known for ChatGPT", "Open AI is most known for ChatGPT and Sora")
 class SentenceSimilarityCalculator:
     def __init__(self):
-        # Load pre-trained BERT model and tokenizer
-        '''
-        Notes:
-        - bert-large seems to do worst?
-        - SBERT doesn't seem to do great either
-
-        ClinicalBERT may be better for our use case (since search space is medical related)
-        - haven't tested this yet
-        '''
-        self.tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
-        self.model = BertModel.from_pretrained('bert-base-uncased')
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model.to(self.device)
-        self.model.eval()
-        #self.model = SentenceTransformer('multi-qa-mpnet-base-dot-v1')
+        
+        # Initialize BERT
+        self.bert_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        self.bert_model = BertModel.from_pretrained('bert-base-uncased')
+        self.bert_model.to(self.device).eval()
+        
+        # Initialize RoBERTa
+        self.roberta_tokenizer = RobertaTokenizer.from_pretrained('roberta-base')
+        self.roberta_model = RobertaModel.from_pretrained('roberta-base')
+        self.roberta_model.to(self.device).eval()
+        
+        # Initialize RoBERTa-MNLI for contradiction detection
+        self.mnli_tokenizer = AutoTokenizer.from_pretrained('roberta-large-mnli')
+        self.mnli_model = AutoModelForSequenceClassification.from_pretrained('roberta-large-mnli')
+        self.mnli_model.to(self.device).eval()
 
-    def cosine_similarity(self, sentence1, sentence2):
-        sentence1 = sentence1.lower()
-        sentence2 = sentence2.lower()
-        # Tokenize and encode sentences
-        inputs1 = self.tokenizer(sentence1, return_tensors="pt", truncation=True, padding=True).to(self.device)
-        inputs2 = self.tokenizer(sentence2, return_tensors="pt", truncation=True, padding=True).to(self.device)
+        # Initialize spaCy (for subject/verb detection)
+        self.nlp_sm = spacy.load("en_core_web_sm")  # Load spaCy's English model
+        self.nlp_lg = spacy.load("en_core_web_lg")  # Load spaCy's large English model
 
-        # Get BERT embeddings for sentences
+    def cosine_similarity(self, model, tokenizer, sentence1, sentence2):
+        """Computes the cosine similarity between two sentences using specified model and tokenizer."""
+        inputs1 = tokenizer(sentence1, return_tensors="pt", truncation=True, padding=True).to(self.device)
+        inputs2 = tokenizer(sentence2, return_tensors="pt", truncation=True, padding=True).to(self.device)
+
         with torch.no_grad():
-            outputs1 = self.model(**inputs1)
-            outputs2 = self.model(**inputs2)
+            outputs1 = model(**inputs1)
+            outputs2 = model(**inputs2)
 
-        # Extract the embeddings (CLS token embeddings)
-        sentence_embedding1 = outputs1.last_hidden_state.mean(dim=1).squeeze()
-        sentence_embedding2 = outputs2.last_hidden_state.mean(dim=1).squeeze()
+        emb1 = outputs1.last_hidden_state.mean(dim=1).squeeze()
+        emb2 = outputs2.last_hidden_state.mean(dim=1).squeeze()
 
-        # sentence_embedding1 = self.model.encode(sentence1, convert_to_tensor=True)
-        # sentence_embedding2 = self.model.encode(sentence2, convert_to_tensor=True)
+        return torch.nn.functional.cosine_similarity(emb1, emb2, dim=0).item()
 
-        # Calculate cosine similarity
-        similarity_score = torch.nn.functional.cosine_similarity(sentence_embedding1, sentence_embedding2, dim=0)
+    def bert_cosine_similarity(self, sentence1, sentence2):
+        """Computes cosine similarity using BERT."""
+        return self.cosine_similarity(self.bert_model, self.bert_tokenizer, sentence1, sentence2)
 
-        return similarity_score.item()
+    def roberta_cosine_similarity(self, sentence1, sentence2):
+        """Computes cosine similarity using RoBERTa."""
+        return self.cosine_similarity(self.roberta_model, self.roberta_tokenizer, sentence1, sentence2)
+
+    def check_contradiction(self, sentence1, sentence2):
+        """Checks if two sentences contradict each other using RoBERTa trained on MNLI."""
+        """Returns the predicted class and the confidence score of the predicted class."""
+        inputs = self.mnli_tokenizer(sentence1, sentence2, return_tensors="pt", truncation=True, padding=True)
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
+        
+        with torch.no_grad():
+            logits = self.mnli_model(**inputs).logits
+            results = torch.softmax(logits, dim=1)
+            predicted_class = torch.argmax(results).item()
+
+        labels = ['contradiction', 'neutral', 'entailment']
+        
+        return labels[predicted_class], results[:, predicted_class].item()
     
+    def has_subject_and_verb(self, sentence, model='sm'):
+        """Check if the sentence contains at least one verb and one subject."""
+        if model == 'sm':
+            doc = self.nlp_sm(sentence)
+        elif model == 'lg':
+            doc = self.nlp_lg(sentence)
+        else:
+            raise ValueError("Invalid model name. Choose 'sm' or 'lg'.")
+        
+        has_subject = any(token.dep_ in ['nsubj', 'nsubjpass'] for token in doc)  # Including passive subjects
+        has_verb = any(token.pos_ == 'VERB' for token in doc)
+        return has_subject and has_verb
+
     def edit_distance(self, sentence1, sentence2):
-        # See https://www.geeksforgeeks.org/edit-distance-dp-5/ for documentation
         words1 = sentence1.split()
         words2 = sentence2.split()
+        dp = [[0] * (len(words2) + 1) for _ in range(len(words1) + 1)]
 
-        m = len(words1)
-        n = len(words2)
-        
-        curr = [0] * (n + 1)
-
-        for j in range(n + 1):
-            curr[j] = j
-        
-        previous = 0
-        
-        for i in range(1, m + 1):
-            previous = curr[0]
-            curr[0] = i
-        
-            for j in range(1, n + 1):
-                temp = curr[j]
-                
-                if words1[i - 1] == words2[j - 1]:
-                    curr[j] = previous
+        for i in range(len(words1) + 1):
+            for j in range(len(words2) + 1):
+                if i == 0:
+                    dp[i][j] = j
+                elif j == 0:
+                    dp[i][j] = i
+                elif words1[i-1] == words2[j-1]:
+                    dp[i][j] = dp[i-1][j-1]
                 else:
-                    curr[j] = 1 + min(previous, curr[j - 1], curr[j])
-                previous = temp
+                    dp[i][j] = 1 + min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1])
 
-        return curr[n]
-    
-    def is_signifcant_edit(self, sent1, sent2):
-        # With multi-qa-mpnet-base-dot-v1, threshold ~0.75/0.60 seems reasonable
-        # With bert-base-uncased, threshold ~0.80 (seems better than the above)
-        a = 0.8
-        b = 0.10
-        c = 0.10
+        return dp[len(words1)][len(words2)]
 
-        words1 = sent1.split()
-        words2 = sent2.split()
+    def is_significant_edit(self, sent1, sent2):
+        # # With multi-qa-mpnet-base-dot-v1, threshold ~0.75/0.60 seems reasonable
+        # # With bert-base-uncased, threshold ~0.80 (seems better than the above)
+        # a = 0.8
+        # b = 0.10
+        # c = 0.10
 
-        cosine_similarity_score = self.cosine_similarity(sent1, sent2)
-        # Normalize edit distance and length_difference into probability value
-        edit_distance_score = 1 - self.edit_distance(sent1, sent2) / max(len(words1), len(words2))
+        # words1 = sent1.split()
+        # words2 = sent2.split()
 
-        length_difference = 1 - abs(len(words1) - len(words2)) / max(len(words1), len(words2))
+        # cosine_similarity_score = self.bert_cosine_similarity(sent1, sent2)
+        # # Normalize edit distance and length_difference into probability value
 
-        simlarity_score = a * cosine_similarity_score + b * edit_distance_score + c * length_difference
+        # max_len = max(len(words1), len(words2))
 
-        return simlarity_score
+        # edit_distance_score = 0 if max_len == 0 else self.edit_distance(sent1, sent2) / max_len
+        # length_difference = 0 if max_len == 0 else 1 - abs(len(words1) - len(words2)) / max_len
+        # simlarity_score = a * cosine_similarity_score + b * edit_distance_score + c * length_difference
+
+        # return simlarity_score
+
+        bert_cosine_similarity = self.bert_cosine_similarity(sent1, sent2)
+        has_subject_and_verb = self.has_subject_and_verb(sent2)
+        # 0.80 threshold value for cosine similarity
+        return has_subject_and_verb and (bert_cosine_similarity <= 0.80)
