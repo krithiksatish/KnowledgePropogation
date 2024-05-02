@@ -120,8 +120,7 @@ def main(mode):
         os.makedirs(directory)
 
     with open('wiki_page_ids.txt', 'r', encoding='utf-8') as file:
-        # lines = file.readlines()
-        lines = ["Alzheimer's_disease", "Sleep_medicine"]
+        lines = file.readlines()
 
         if mode == 'rand':
             generate_annotation_set(lines, directory, target_count=300)
