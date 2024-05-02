@@ -618,7 +618,7 @@ def clean_wiki_text(text: str) -> str:
 # that aren't related to actual content changes)
 def filter_non_content_edits(old_text: str, new_text: str) -> bool:
     contains_content = True
-    cutout_set = ('|', '{|', '=', '[[Category:', '[[File:', '{{', '#REDIRECT', '#redirect')
+    cutout_set = ('|', '{|', '[[Category:', '[[Image:' '[[File:', '{{', '#REDIRECT', '#redirect')
 
     # Strip leading asterisks and other whitespace characters from the new text
     strip_new_text = re.sub(r'^\s*\*+\s*', '', new_text.strip(), flags=re.MULTILINE)

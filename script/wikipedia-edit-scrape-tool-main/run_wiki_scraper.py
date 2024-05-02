@@ -14,7 +14,8 @@ def handle_wiki_mode(page_title, directory):
     with open(csv_file, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         headers = ['Old Text', 'New Text', 'Has Textual Change', 'Cleaned Old Text', 'Cleaned New Text',
-                   'Difference', 'References', 'Editor Name', 'Editor ID', 'Edit Timestamp', 'Edit URL']
+                   'Difference', 'Is Significant Edit', 'References', 'Editor Name', 'Editor ID', 
+                   'Edit Timestamp', 'Edit URL']
         writer.writerow(headers)
 
         revisions_data = get_monthly_revision_comparison_links(page_title)
@@ -27,10 +28,11 @@ def handle_wiki_mode(page_title, directory):
             print(f"    - Found {len(context_pairs_list)} context pairs")
 
             for old_text, new_text, cleaned_old_text, cleaned_new_text, refs, is_content_changed in context_pairs_list:
-                # significant_edit = sim.is_significant_edit(cleaned_old_text, cleaned_new_text)
+                significant_edit = sim.is_significant_edit(cleaned_old_text, cleaned_new_text)
                 differences = get_text_differences(cleaned_old_text, cleaned_new_text)
                 writer.writerow([old_text, new_text, is_content_changed, cleaned_old_text, cleaned_new_text,
-                                 differences, refs if refs else '', editor_name, editor_id, edit_timestamp, url])
+                                 differences, significant_edit, refs if refs else '', editor_name, editor_id, 
+                                 edit_timestamp, url])
 
 def handle_similarity_mode(page_title, directory):
     sim = SentenceSimilarityCalculator()
@@ -118,13 +120,14 @@ def main(mode):
         os.makedirs(directory)
 
     with open('wiki_page_ids.txt', 'r', encoding='utf-8') as file:
-        lines = file.readlines()
+        # lines = file.readlines()
+        lines = ["Alzheimer's_disease", "Sleep_medicine"]
 
         if mode == 'rand':
             generate_annotation_set(lines, directory, target_count=300)
         else:
-            random_lines = random.sample(lines, 1)  # Select 3 random lines
-            for line in random_lines:
+            # random_lines = random.sample(lines, 1)  # Select 3 random lines
+            for line in lines:
                 page_title = line.strip()
                 print(f"Processing page: {page_title}")
                 if mode == 'wiki':
