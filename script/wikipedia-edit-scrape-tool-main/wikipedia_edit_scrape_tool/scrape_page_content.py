@@ -1,401 +1,22 @@
 from datetime import datetime
-import ipdb
-from urllib.parse import urlparse, parse_qs
 import bs4
 import requests
 import re
 # import dataclasses
 from nltk.tokenize import sent_tokenize
 from typing import Dict, Union, List
-from dataclasses import dataclass
-from html2text import HTML2Text
-import os
-from .wiki_regexes import cut_list, cut_sup, cut_note, cut_table, cut_first_table,\
-    cut_references2, cut_references, cut_references_es, cut_references_fr, cut_references_fr2, cut_references_ko, cut_references_ru,\
-          double_paren, emphasis, bold, second_heading, third_heading, fourth_heading, second_heading_separation, fourth_heading2, third_heading2, all_spaces, \
-            punctuations, link, link_number, paren, paren_fr, paren_zh2
+import uuid
 
 from typing import List, Tuple  # for get_prev_after_text
 import difflib  # for find_text_difference_and_context
+from sklearn.feature_extraction.text import TfidfVectorizer  # for find_closest_sentences
+from sklearn.metrics.pairwise import cosine_similarity
 import nltk
 nltk.download('punkt')
 
-re_category_list = re.compile(r'<link rel="mw:PageProp\/Category" href=".\/(Category:.*?)"')
-
-text_maker = HTML2Text()
-text_maker.ignore_links = True
-text_maker.ignore_images = True
-text_maker.ignore_tables = True
-text_maker.ignore_emphasis = False
-
-def get_lang(person_link):
-    try:
-        json = requests.get("https://en.wikipedia.org/api/rest_v1/page/metadata/"+person_link).json()
-    except:
-        return [('en', person_link)]
-    if "language_links" in json:
-        lang_list = json["language_links"]
-        return [('en', person_link)]+[(l['lang'], l['titles']['canonical']) for l in lang_list]
-    else:
-        return [('en', person_link)]
-
-def cut_ref(text, lang_wiki):
-    if lang_wiki == "enwiki":
-        return cut_references.sub(r"\1",text)
-    elif lang_wiki == "eswiki":
-        return cut_references_es.sub(r"\1",text)
-    elif lang_wiki == "frwiki":
-        text = cut_references_fr.sub(r"\1",text)
-        return cut_references_fr2.sub(r"\1",text)
-    elif lang_wiki == "kowiki":
-        return cut_references_ko.sub(r"\1",text)
-    elif lang_wiki == "ruwiki":
-        return cut_references_ru.sub(r"\1",text)
-    else:
-        raise ValueError("unsupported lang: "+lang_wiki)
-
-def get_category(person_id, lang_wiki): 
-    """_summary_
-
-    Args:
-        person_id (str): Wikipedia page ID.
-
-    Returns:
-        List[str]: List of categories that the person belongs to.
-    """
-    if lang_wiki == "enwiki":
-        txt = requests.get("https://en.wikipedia.org/api/rest_v1/page/html/"+person_id).text.replace("\n","")
-        categories = re_category_list.findall(txt)
-        return categories
-    else:   
-        return [] # NOTE: haven't implemented this for other languages yet.
-
-def get_text(person_link, lang_wiki):
-    # txt = requests.get("https://en.wikipedia.org/api/rest_v1/page/html/"+person).text.replace("\n","")
-    txt = requests.get(person_link).text.replace("\n","")
-    txt = clean_html(txt, lang_wiki)
-    return txt
-
-@dataclass
-class Paragraph:
-    clean_text: str
-
-@dataclass
-class Header:
-    text: str
-    level: int
-
-
-
-def clean_paragraph(paragraph_elem: bs4.element.Tag) -> Paragraph:
-    # use the html2text library to convert the html to text.
-    paragraph = text_maker.handle(str(paragraph_elem))
-
-    paragraph = re.sub(r"\n", " ", paragraph)
-    # remove the reference links.
-    paragraph = re.sub(r"\[\d+\]", "", paragraph)
-    # remove text that is in parentheses.
-    paragraph = re.sub(r'\([^)]*\)', "", paragraph) # TODO: this leaves a blank space, which is not ideal.
-    # remove text that is in brackets.
-    paragraph = re.sub(r'\[[^)]*\]', "", paragraph) # TODO: this might also leave a blank space.
-
-    # remove the markdown formatting for bold and italics.
-    paragraph = re.sub(r"\*\*", "", paragraph)
-    paragraph = re.sub(r"_", "", paragraph)
-    paragraph = paragraph.strip()
-    return Paragraph(paragraph)
-
-def retrieve_all_sentences(content_blocks: List[Union[Paragraph, Header]]) -> List[str]:
-    all_sentences = []
-    for paragraph in filter(lambda x: isinstance(x, Paragraph), content_blocks):
-        paragraph_text = paragraph.clean_text
-        sentences = sent_tokenize(paragraph_text)
-        all_sentences.extend(sentences)
-    return all_sentences
-
-def clean_header(header_elem: bs4.element.Tag) -> Header:
-    # get the level of the header.
-    level = int(header_elem.name[1])
-    # get the text of the header.
-    header_text = header_elem.text
-    return Header(header_text, level)
-    
-def remove_non_sentences(content_div: bs4.element.Tag, wiki_lang: str) -> bs4.element.Tag:
-    hatnotes = content_div.find_all('div', class_='hatnote')
-    for hatnote in hatnotes:
-        hatnote.decompose()
-    
-    # remove mw-editsection
-    edit_sections = content_div.find_all('span', class_='mw-editsection')
-    for edit_section in edit_sections:
-        edit_section.decompose()
-
-    # remove <p> that have navbar in their class.
-    navbars = content_div.find_all('p', class_='navbar')
-    for navbar in navbars:
-        navbar.decompose()
-
-    # remove the info box if it exists.
-    info_box = content_div.find('table', class_='infobox')
-    if info_box:
-        info_box.decompose()
-    # remove all figures.
-    figures = content_div.find_all('figure')
-    for figure in figures:
-        figure.decompose()
-    
-    # remove all the mw-empty-elt paragraphs
-    empty_paragraphs = content_div.find_all('p', class_='mw-empty-elt')
-    for empty_para in empty_paragraphs:
-        empty_para.decompose()
-    # remove all the tables.
-    tables = content_div.find_all('table')
-    for table in tables:
-        table.decompose()
-    # remove all the lists.
-    lists = content_div.find_all('ul')
-    for list_ in lists:
-        list_.decompose()
-    # remove all the images.
-    images = content_div.find_all('img')
-    for image in images:
-        image.decompose()
-    # remove all the audio files.
-    audio_files = content_div.find_all('audio')
-    for audio_file in audio_files:
-        audio_file.decompose()
-    # remove all the video files.
-    video_files = content_div.find_all('video')
-    for video_file in video_files:
-        video_file.decompose()
-    # remove all the references.
-    references = content_div.find_all('div', class_='reflist')
-    for reference in references:
-        reference.decompose()
-
-# TODO: fill this in
-def _filter_empty_sections(important_content_elems: List[Union[Paragraph, Header]]) -> List[Union[Paragraph, Header]]:
-    # filter out headers where they don't enclose any paragraphs.
-    filtered_important_content_elems = []
-
-
-def get_text(page_link, wiki_lang) -> List[Union[Paragraph, Header]]:
-    #### step 1: requesting the html
-    # get the html through a request.
-
-    # do try/except 3 times.
-    for _ in range(3):
-        try:
-            html = requests.get(page_link, timeout=10).text
-            break
-        except requests.exceptions.Timeout:
-            print("timeout error")
-            continue
-
-    soup = bs4.BeautifulSoup(html, 'html.parser')
-    # keep only the #mw-content-text div.
-    content_div = soup.find('div', id='mw-content-text')
-
-    ### Step 2 removing large swathes of the page
-    remove_non_sentences(content_div, wiki_lang) # NOTE: warning, this modifies the content_div in place.
-
-    # iterate over the children of the content div. 
-    important_content_elems = []
-    print("looking for p, h2, h3")
-    for element in soup.find_all(lambda tag: tag.name in ['p', 'h2', 'h3']):
-        if element.name == 'p':
-            important_content_elems.append(clean_paragraph(element))
-        elif element.name == 'h2' or element.name == 'h3':
-            important_content_elems.append(clean_header(element))
-    # TODO: add call to filter headers for empty sections.
-    return important_content_elems
-
-# TODO: there might be an issue here when getting the segmented text.
-def get_headings(t):
-    def _get_headings(heading_list, heading="## ",second=True):
-        if len(heading_list)==1:
-            if second:
-                return [["summary",heading_list[0]]]
-            else:
-                return []
-        res = []
-        _head = None
-        for i, h in enumerate(heading_list):
-            if i == 0 and not h.startswith("#") and second:
-                res.append(["summary",h])
-                continue
-            if h.startswith(heading):
-                _head = h.replace("#","").strip().lower()
-            else:
-                if _head is None:
-                    continue
-                if not second:
-                    h = fourth_heading2.sub(" ",h)
-                    h = all_spaces.sub(" ",h)
-                res.append([_head, h])
-                _head=None
-        return res
-    segmented = {}
-    seconds = re.split(r"\s(#{2}\s{1}.*?)\s{2}",t)
-    segmented["second"]=_get_headings(seconds, "## ", True)
-    segmented["third"]= [_get_headings(re.split(r"\s(#{3}\s{1}.*?)\s{2}",h_text), "### ", False) for h, h_text in segmented["second"]]
-    for i, (h, h_text) in enumerate(segmented["second"]):
-        h_text = fourth_heading2.sub("  ",h_text)
-        h_text = third_heading2.sub("  ",h_text)
-        h_text = all_spaces.sub(" ",h_text)
-        segmented["second"][i][1] = h_text
-    return segmented
-
-def _verify_previous_revision_info(revision_info_div: bs4.element.Tag, lang: str):
-    if lang == "enwiki":
-        assert "old revision" in revision_info_div.find('p').text 
-    elif lang == "frwiki":
-        assert "version archivée" in revision_info_div.text
-    elif lang == "eswiki":
-        assert "versión antigua" in revision_info_div.text
-    elif lang == "ruwiki":
-        assert "старая версия" in revision_info_div.text
-    elif lang == "kowiki":
-        # assert "이전 버전" in revision_info_div.text, ipdb.set_trace()
-        pass
-    else:
-        raise ValueError(f"Language {lang} not supported.")
-
-def cut_paren(text, lang_wiki):
-    if lang_wiki == "enwiki":
-        return paren.sub("",text)
-    elif lang_wiki == "eswiki":
-        return paren.sub("",text)
-    elif lang_wiki == "frwiki":
-        text = paren.sub("",text)
-        return paren_fr.sub(r"\1",text)
-    elif lang_wiki == "zh":
-        text = paren.sub("",text)
-        # text = paren_zh.sub("",text)
-        return paren_zh2.sub(r"\1",text)
-    elif lang_wiki == "kowiki":
-        return paren.sub("",text)
-    elif lang_wiki == "ruwiki":
-        text = paren.sub("",text)
-        return paren_fr.sub(r"\1",text)
-    else:
-        raise ValueError("unsupported lang: "+lang_wiki)
-    
-def _verify_current_revision_info(revision_info_div: bs4.element.Tag, lang: str):
-    # TODO: ask Chan if we really need these.
-    if lang == "enwiki":
-        assert "current revision" in revision_info_div.find('p').text
-    elif lang == "frwiki":
-        assert "version actuelle" in revision_info_div.text
-    elif lang == "eswiki":
-        assert "versión actual" in revision_info_div.text
-    elif lang == "ruwiki":
-        assert "текущая версия" in revision_info_div.text
-    elif lang == "kowiki":
-        # assert "현재 버전" in revision_info_div.text, ipdb.set_trace()
-        # NOTE: commented out, maybe it's needed 
-        pass
-
-    else:
-        raise ValueError(f"Language {lang} not supported.")
-
-def clean_html(text, lang_wiki: str):
-    # if lang_wiki != "enwiki":
-    #     ipdb.set_trace()
-    text_soup = bs4.BeautifulSoup(text, 'html.parser')
-    # remove the div with mw-content-subtitle element.
-    content_revision_info_previous = text_soup.find('div', id='mw-revision-info')
-    content_revision_info_current = text_soup.find('div', id='mw-revision-info-current')
-    if content_revision_info_previous: 
-        # assert that the content revision info has a <p> tag containing the text "old revision"
-        _verify_previous_revision_info(content_revision_info_previous, lang_wiki)
-        content_revision_info_previous.decompose()
-    if content_revision_info_current:
-        # assert "current revision" in content_revision_info_current.find('p').text
-        _verify_current_revision_info(content_revision_info_current, lang_wiki)
-        content_revision_info_current.decompose()
-    text = str(text_soup)
-    t = cut_table.sub("  ", text)
-    t = cut_list.sub(" ",t)
-    t = cut_sup.sub("",t)
-    t = cut_note.sub("",t)
-    t = text_maker.handle(t).replace("\n"," ")
-    t = cut_first_table.sub(r"\2",t)
-    t = cut_ref(t, lang_wiki)
-    t = cut_references2.sub(r"\1",t)
-    t = double_paren.sub("",t)
-    t = link.sub(r"\1",t)
-    t = link_number.sub("",t)
-    t = emphasis.sub(r"\1",t)
-    t = cut_paren(t, lang_wiki)
-    t = bold.sub(r"\1",t)
-    t = t.replace(" > "," ")
-    if lang_wiki == "enwiki":
-        t = t.replace("\'t", " \'t")
-        t = t.replace("\'s", " \'s")
-        t = t.replace("\'ve", " \'ve")
-        t = t.replace("\'m", " \'m")
-        t = t.replace("\'re", " \'re")
-    
-    segmented = get_headings(t)
-    second_headings_separated = second_heading_separation.findall(t)
-    second_headings = [h[0] for h in second_headings_separated]
-    fourth_headings = fourth_heading.findall(t)
-    t = fourth_heading.sub("  ",t)
-    third_headings = third_heading.findall(t)
-    t = third_heading.sub("  ",t)
-    second_headings = second_heading.findall(t)
-    t = second_heading.sub("  ",t)
-    # t = punctuations.sub(r" \1 ",t)
-    t = all_spaces.sub(" ",t)
-    return t, (second_headings, third_headings, fourth_headings), segmented
-
-re_he = re.compile("[^a-zA-Z0-9]+he ")
-re_she = re.compile("[^a-zA-Z0-9]+she ")
-re_his = re.compile("[^a-zA-Z0-9]+his ")
-re_her = re.compile("[^a-zA-Z0-9]+her ")
-re_him = re.compile("[^a-zA-Z0-9]+him ")
-
-def get_gender_with_text(txt):
-    txt = txt.clean_text if isinstance(txt, Paragraph) else txt.text if isinstance(txt, Header) else "Unsupported object type"
-#     txt = txt.lower()
-    freq_he = len(re_he.findall(txt))+len(re_his.findall(txt))+len(re_him.findall(txt))
-    freq_she = len(re_she.findall(txt))+len(re_her.findall(txt))
-    gender = None
-    if freq_she > freq_he:
-        gender = "F"
-    elif freq_he > freq_she:
-        gender = "M"
-    return gender
-
-def get_info(wiki_link: str, lang_wiki: str):
-    """Gets the information from every section of a Wikipedia page.
-
-    Args:
-        wiki_link (str): Link to the person's wikipedia page and the person's name.
-        lang_wiki (str): 
-
-    Returns:
-        Tuple[str, Dict[str, Any]]: _description_
-    """
-    wiki_link = wiki_link.replace("/wiki/","")
-    # link is of the form 'https://en.wikipedia.org/w/index.php?title=Scottie_Barnes&oldid=910610546'
-    # get the title 
-    person_id = parse_qs(urlparse(wiki_link).query)['title'][0]
-
-    person_info = {}
-    person_info["langs"] = get_lang(wiki_link) # TODO: needs to be replaced.
-    person_info["categories"] = get_category(person_id, lang_wiki) # 
-    txt, section_names, section_text = get_text(wiki_link, lang_wiki)
-    person_info["gender"] = get_gender_with_text(txt) # count of gendered pronouns 
-    person_info["text"] = txt # unsplit text
-    person_info["section-names"] = section_names # lengths of sections should be the same as section-text.
-    person_info["section-text"] = section_text
-    return wiki_link, person_info
-
 # given the url of a wiki-diff page, returns a tuple containing a list of sentence pairs 
 # with each pair containing a text block, and boolean indicating whether the text contains real content
-def get_del_add_text(diff_page_url: str) -> List[Tuple[str, str, str, str, bool]]:
+def get_del_add_text(diff_page_url: str) -> List[Tuple[str, str, str, str, set, bool, bool]]:
     
     # do try/except 3 times.
     for _ in range(3):
@@ -496,92 +117,166 @@ def get_aggregated_text(block: bs4.element.Tag) -> Tuple[str, set]:
 
     return total_block_text, refs_set
 
-# takes in the text block containing changes, the original text block, and the 
-# start and end indices of the changes, and returns just the portion of the text 
-# block that contains the changes and its corresponding portion of the original text block
-# need import difflib
-# takes in the text block containing changes, the original text block, and the 
-# start and end indices of the changes, and returns just the portion of the text 
-# block that contains the changes and its corresponding portion of the original text block
-# need import difflib
-def find_differences_and_context(changed_text, og_text, references, context_sentences=1) -> List[Tuple[str, str, str, str, set, bool]]:
-    if not changed_text:
-        changed_text = ''
-    if not og_text:
-        og_text = ''
+# custom preprocessor to clean text before TF-IDF vectorization
+def custom_preprocessor(text):
+    # Replace special characters with space
+    text = re.sub(r'[{}[\]()<>]', ' ', text)
+    text = re.sub(r'[!?,;:.]', ' ', text)
+    text = re.sub(r'[\'"@#\$%\^&\*\_\+=]', ' ', text)
+    text = re.sub(r'[\\|/]', ' ', text)
+    text = re.sub(r'[~-]', ' ', text)
+    return text.strip()  # Strip leading and trailing spaces
 
-    changed_sentences = sent_tokenize(changed_text)
-    og_sentences = sent_tokenize(og_text)
-    diff = list(difflib.ndiff(og_sentences, changed_sentences))
-    changes_with_context = []
-
-    # Identifying changes and their context
-    for i, s in enumerate(diff):
-        if s.startswith('- ') or s.startswith('+ '):
-            start_context = max(0, i - context_sentences)
-            end_context = min(len(diff), i + 1)
-            context = diff[start_context:end_context]
-            changes_with_context.append(context)
-
-    # Merging close contexts and processing them
-    merged_contexts = []
-    if changes_with_context:
-        current_merge = changes_with_context[0]
-        for context in changes_with_context[1:]:
-            if diff.index(context[0]) <= diff.index(current_merge[-1]):
-                current_merge.extend(context)
-                current_merge = list(dict.fromkeys(current_merge))
-            else:
-                merged_contexts.append(current_merge)
-                current_merge = context
-        merged_contexts.append(current_merge)  # Add the last context
-
-    cleaned_contexts = []
-    for context in merged_contexts:
-        og_context = ' '.join([s[2:] for s in context if s.startswith('- ')])
-        ch_context = ' '.join([s[2:] for s in context if s.startswith('+ ')])
-        
-        # Split contexts into smaller segments if needed
-        if len(og_context) > 250 or len(ch_context) > 250:
-            smaller_contexts = split_into_smaller_contexts(og_context, ch_context)
-            for small_og, small_ch in smaller_contexts:
-                process_and_append_context(small_og, small_ch, references, cleaned_contexts)
-        else:
-            process_and_append_context(og_context, ch_context, references, cleaned_contexts)
+def find_closest_sentences(sentences_before, sentences_after, threshold=0.4):
+    # Handle cases where either sentences_before or sentences_after is empty
+    if not sentences_before and not sentences_after:
+        return [], [], []
+    if not sentences_before:
+        return [], [], list(range(len(sentences_after)))
+    if not sentences_after:
+        return [], list(range(len(sentences_before))), []
     
+    sentences_before = [custom_preprocessor(sent) for sent in sentences_before]
+    sentences_after = [custom_preprocessor(sent) for sent in sentences_after]
+
+    if not any(sentences_before) and not any(sentences_after):
+        return [([i for i in range(len(sentences_before))], [j for j in range(len(sentences_after))])], [], []
+    if not any(sentences_before):
+        return [], [], list(range(len(sentences_after)))
+    if not any(sentences_after):
+        return [], list(range(len(sentences_before))), []
+    
+    # Direct mapping if both lists have only one sentence each
+    if len(sentences_before) == 1 and len(sentences_after) == 1:
+        return [([0], [0])], [], []
+
+    print ("sentences_before: ", sentences_before)
+    print ("sentences_after: ", sentences_after)
+    
+    # Replace empty sentences with a placeholder to avoid errors in vectorization
+    rand_id = str(uuid.uuid4())
+    sentences_before = [sent if sent else "EMPTY" + rand_id for sent in sentences_before]
+    sentences_after = [sent if sent else "EMPTY" + rand_id for sent in sentences_after]
+
+    # Vectorize sentences using TF-IDF
+    vectorizer = TfidfVectorizer().fit(sentences_before + sentences_after)
+    vectors_before = vectorizer.transform(sentences_before)
+    vectors_after = vectorizer.transform(sentences_after)
+
+    # Compute cosine similarity between each pair of sentences
+    similarity_matrix = cosine_similarity(vectors_before, vectors_after)
+
+    # Track the best matches from both before to after and after to before
+    before_to_after = {}
+    after_to_before = {}
+
+    # Find the best matches for each sentence in 'before'
+    for i, row in enumerate(similarity_matrix):
+        best_match_index = row.argmax()
+        best_match_score = row[best_match_index]
+        if best_match_score > threshold:
+            if best_match_index not in before_to_after:
+                before_to_after[best_match_index] = []
+            before_to_after[best_match_index].append(i)
+
+    # Find the best matches for each sentence in 'after'
+    for j, col in enumerate(similarity_matrix.T):
+        best_match_index = col.argmax()
+        best_match_score = col[best_match_index]
+        if best_match_score > threshold:
+            if best_match_index not in after_to_before:
+                after_to_before[best_match_index] = []
+            after_to_before[best_match_index].append(j)
+
+    # Combine both mappings to ensure all sentences are considered
+    combined_mappings = {}
+    for j, i_list in before_to_after.items():
+        combined_mappings[j] = combined_mappings.get(j, set()).union(i_list)
+    for i, j_list in after_to_before.items():
+        for j in j_list:
+            combined_mappings[j] = combined_mappings.get(j, set()).union([i])
+
+    # Merge mappings where multiple 'after' sentences map to the same 'before' sentence and vice versa
+    final_mappings = {}
+    for after, befores in combined_mappings.items():
+        for before in befores:
+            if before in final_mappings:
+                final_mappings[before][1].add(after)
+            else:
+                final_mappings[before] = (set([before]), set([after]))
+
+    # Further merge final_mappings if any before indices are shared
+    merged_final_mappings = []
+    for before, (befores, afters) in final_mappings.items():
+        found = False
+        for i, (existing_befores, existing_afters) in enumerate(merged_final_mappings):
+            if not existing_befores.isdisjoint(befores) or not existing_afters.isdisjoint(afters):
+                merged_final_mappings[i] = (existing_befores.union(befores), existing_afters.union(afters))
+                found = True
+                break
+        if not found:
+            merged_final_mappings.append((befores, afters))
+
+    # Convert merged_final_mappings from sets to lists and combine consecutive afters
+    combined_final_mappings = [(sorted(befores), sorted(afters)) for befores, afters in merged_final_mappings]
+
+    # Add unmatched sentences
+    used_before = set()
+    used_after = set()
+    for befores, afters in combined_final_mappings:
+        used_before.update(befores)
+        used_after.update(afters)
+
+    unmatched_before = [i for i in range(len(sentences_before)) if i not in used_before]
+    unmatched_after = [j for j in range(len(sentences_after)) if j not in used_after]
+
+    return combined_final_mappings, unmatched_before, unmatched_after
+
+# takes in the text block containing changes, the original text block, and the 
+# start and end indices of the changes, and returns just the portion of the text 
+# block that contains the changes and its corresponding portion of the original text block
+# uses TF-IDF vectorization and cosine similarity
+# returns a tuple containing:
+# [0] the unmodified before text block, [1] the unmodified after text block, [2] the modified before text block,
+# [3] the modified after text block, [4] a set of references corresponding to the text block,
+# [5] whether the unmodified before text block contained real content, [6] whether the unmodified after text block contained real content
+def find_differences_and_context(changed_text, og_text, references) -> List[Tuple[str, str, str, str, set, bool, bool]]:
+    # Tokenize texts into sentences
+    sentences_before = nltk.sent_tokenize(og_text)
+    sentences_after = nltk.sent_tokenize(changed_text)
+
+    # Get mappings
+    mappings, unmatched_before, unmatched_after = find_closest_sentences(sentences_before, sentences_after)
+
+    # Identify modified sentences
+    modified = []
+
+    for befores, afters in mappings:
+        before_text = ' '.join([sentences_before[i] for i in befores])
+        after_text = ' '.join([sentences_after[j] for j in afters])
+        if before_text != after_text:
+            modified.append((before_text, after_text))
+
+    # Handle unmatched sentences as modified with empty counterparts
+    for i in unmatched_before:
+        modified.append((sentences_before[i], ""))
+    for j in unmatched_after:
+        modified.append(("", sentences_after[j]))
+
+    # Process modified sentences
+    cleaned_contexts = []
+    for before_text, after_text in modified:
+        process_and_append_context(before_text, after_text, references, cleaned_contexts)
+
     return cleaned_contexts
 
+# helper function to process contexts and append them to cleaned_contexts list
 def process_and_append_context(og_context, ch_context, references, cleaned_contexts) -> None:
-    contains_content = filter_non_content_edits(og_context, ch_context)
-    cleaned_og_context = clean_wiki_text(og_context) if contains_content else ""
-    cleaned_ch_context = clean_wiki_text(ch_context) if contains_content else ""
-    cleaned_contexts.append((og_context, ch_context, cleaned_og_context, cleaned_ch_context, references, contains_content))
-
-def split_into_smaller_contexts(og_context, ch_context, max_length=250) -> List[Tuple[str, str]]:
-    og_sentences = sent_tokenize(og_context)
-    ch_sentences = sent_tokenize(ch_context)
-    smaller_contexts = []
-    
-    current_og, current_ch = "", ""
-    current_length = 0
-    
-    for og_sent, ch_sent in zip(og_sentences, ch_sentences):
-        # Check the length with the new sentence added
-        if current_length + len(og_sent) + len(ch_sent) <= max_length:
-            current_og += (og_sent + " ")
-            current_ch += (ch_sent + " ")
-            current_length += len(og_sent) + len(ch_sent)
-        else:
-            if current_og and current_ch:  # Ensure not to add empty strings
-                smaller_contexts.append((current_og.strip(), current_ch.strip()))
-            current_og, current_ch = og_sent + " ", ch_sent + " "
-            current_length = len(og_sent) + len(ch_sent)
-    
-    # Add the last segment if it has content
-    if current_og and current_ch:
-        smaller_contexts.append((current_og.strip(), current_ch.strip()))
-    
-    return smaller_contexts
+    old_contains_content, new_contains_content = filter_non_content_edits(og_context, ch_context)
+    cleaned_og_context = clean_wiki_text(og_context) if old_contains_content else ""
+    cleaned_ch_context = clean_wiki_text(ch_context) if new_contains_content else ""
+    cleaned_contexts.append((og_context, ch_context, cleaned_og_context, cleaned_ch_context, references, 
+                             old_contains_content, new_contains_content))
 
 # takes in a text block and returns the cleaned text
 def clean_wiki_text(text: str) -> str:
@@ -616,12 +311,17 @@ def clean_wiki_text(text: str) -> str:
 
 # filter out non-content edits based on the context of the changes (eg. presence of certain characters
 # that aren't related to actual content changes)
-def filter_non_content_edits(old_text: str, new_text: str) -> bool:
-    contains_content = True
-    cutout_set = ('|', '{|', '[[Category:', '[[Image:' '[[File:', '{{', '#REDIRECT', '#redirect')
+# return two boolean values: 
+#   [0] whether old text contains actual textual content, [1] whether new text contains actual textual content
+def filter_non_content_edits(old_text: str, new_text: str) -> Tuple[bool, bool]:
+    old_contains_content = True
+    new_contains_content = True
+    cutout_set = ('|', '{|', '[[Category:', '[[Image:' '[[File:', '{{', '#REDIRECT', '#redirect', "==")
 
     # Strip leading asterisks and other whitespace characters from the new text
     strip_new_text = re.sub(r'^\s*\*+\s*', '', new_text.strip(), flags=re.MULTILINE)
+    # Strip leading asterisks and other whitespace characters from the old text
+    strip_old_text = re.sub(r'^\s*\*+\s*', '', old_text.strip(), flags=re.MULTILINE)
 
     # Patterns to check for non-content edits
     non_content_patterns = [
@@ -631,15 +331,13 @@ def filter_non_content_edits(old_text: str, new_text: str) -> bool:
 
     # Check if the new text starts with any non-content leading characters or matches any of the specified patterns
     if strip_new_text.startswith(cutout_set) or any(re.match(pattern, strip_new_text) for pattern in non_content_patterns):
-        contains_content = False
+        new_contains_content = False
+    
+    # Check if the old text contains any non-content patterns
+    if strip_old_text.startswith(cutout_set) or any(re.match(pattern, strip_old_text) for pattern in non_content_patterns):
+        old_contains_content = False
 
-    # Apply the same checks to the old text if the new text is empty
-    if not new_text:
-        strip_old_text = old_text.strip()
-        if strip_old_text.startswith(cutout_set) or any(re.match(pattern, strip_old_text) for pattern in non_content_patterns):
-            contains_content = False
-
-    return contains_content
+    return old_contains_content, new_contains_content
 
 # takes in two texts and returns the differences between old and new text
 def get_text_differences(old_text, new_text) -> str:
@@ -695,8 +393,9 @@ def get_monthly_revision_comparison_links(page_title: str) -> List[Tuple[str, Di
         for rev in revisions:
             rev_id = rev['revid']
             timestamp = rev['timestamp']
-            user = rev['user']
-            userid = rev['userid']
+            if 'user' in rev:
+                user = rev['user']
+                userid = rev['userid']
             date = datetime.fromisoformat(timestamp.rstrip('Z'))
             month_key = f"{date.year}-{date.month:02d}"
             if month_key not in monthly_revisions:

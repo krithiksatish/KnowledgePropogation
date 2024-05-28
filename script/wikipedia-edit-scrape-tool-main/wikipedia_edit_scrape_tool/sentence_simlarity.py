@@ -2,8 +2,6 @@ from transformers import BertTokenizer, BertModel, RobertaTokenizer, RobertaMode
                             AutoTokenizer, AutoModelForSequenceClassification
 import torch
 import spacy
-import difflib
-from nltk.tokenize import sent_tokenize
 
 class SentenceSimilarityCalculator:
     def __init__(self):
